@@ -38,9 +38,9 @@ src/*/__init__.py                    ✓  16 files
 tests/__init__.py                    ✓
 CONTEXT.md                           ✓
 src/state/ba_state.py                ✓  Pydantic v2, 50+ fields, C4 C5 C8 C9 A1 A2 A3
-src/utils/seed_manager.py            ✓  C5 enforced, wraps all random calls
-src/utils/resource_governor.py       ✓  C4 enforced, warn/alert/halt
-eval/run_eval.py                     ✓  150 questions loaded, results.json
+src/utils/seed_manager.py            ✓  C5 enforced
+src/utils/resource_governor.py       ✓  C4 enforced
+eval/run_eval.py                     ✓  150 questions, results.json
 tests/test_ci_gate.py                ✓  17/17 PASSED
 .github/workflows/tests.yml          ✓  GitHub Actions CI
 src/ingestion/pdf_ingestor.py        ✓  N01 — PDF/DOCX/CSV/XLSX/PNG/JPG + OCR
@@ -52,6 +52,15 @@ python eval/run_eval.py --dataset financebench --seed 42 → 0.0% stub correct
 
 ## KNOWN_ISSUES
 None — all clean.
+
+## FOLDER STRUCTURE (clean)
+D:\projects\finbench_agent\
+  src\agents\          src\explainability\   src\forensics\
+  src\ingestion\       src\ml\               src\output\
+  src\pipeline\        src\prompts\          src\quantitative\
+  src\retrieval\       src\rlef\             src\routing\
+  src\state\           src\ui\               src\utils\
+  tests\   eval\   data\   models\   outputs\   logs\
 
 ## CONSTRAINTS C1-C10 (ACTIVE — NEVER VIOLATE)
 C1: $0 cost permanently. No paid APIs ever.
@@ -71,7 +80,7 @@ numpy, psutil==5.9.8, scipy, datasets
 rich==13.7.1, python-dotenv==1.0.1, pyyaml
 pdfplumber, pymupdf, python-docx
 openpyxl, pandas, Pillow, pytesseract, pdf2image
-Tesseract-OCR engine: C:\Program Files\Tesseract-OCR\tesseract.exe
+Tesseract-OCR: C:\Program Files\Tesseract-OCR\tesseract.exe
 
 ## NEXT FILES TO BUILD — Week 2 continued
 1. src/ingestion/section_tree_builder.py  ← N02 (next session)
