@@ -1,0 +1,68 @@
+name: FinBench CI Gate
+
+on:
+  push:
+    branches: [ main, master, dev ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pydantic==2.7.1
+        pip install pytest==8.2.0
+        pip install pytest-cov
+        pip install numpy
+        pip install psutil==5.9.8
+        pip install scipy
+        pip install datasets
+        pip install rich==13.7.1
+        pip install python-dotenv==1.0.1
+        pip install pyyaml
+
+    - name: Run CI gate tests
+      run: |
+        pytest tests/test_ci_gate.py -v --tb=short
+
+    - name: C5 seed check
+      run: |
+        python -c "
+        import sys
+        sys.path.insert(0, '.')
+        from src.utils.seed_manager import SeedManager
+        assert SeedManager.get() == 42, 'C5 VIOLATION: seed != 42'
+        print('C5 check passed: seed=42')
+        "
+
+    - name: C9 rlef scan on outputs folder
+      run: |
+        if [ -d "outputs" ] && [ "$(ls -A outputs)" ]; then
+          if grep -r "_rlef_" outputs/ 2>/dev/null; then
+            echo "C9 VIOLATION: _rlef_ found in outputs"
+            exit 1
+          fi
+        fi
+        echo "C9 check passed: no _rlef_ in outputs"
+
+    - name: C4 RAM baseline check
+      run: |
+        python -c "
+        import sys
+        sys.path.insert(0, '.')
+        from src.utils.resource_governor import ResourceGovernor
+        status = ResourceGovernor.status()
+        assert status['safe'], f'C4 VIOLATION: RAM={status[\"used_gb\"]}GB'
+        print(f'C4 check passed: RAM={status[\"used_gb\"]}GB')
+        "
