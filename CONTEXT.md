@@ -2,7 +2,7 @@
 # PASTE THIS ENTIRE FILE AT THE START OF EVERY NEW CLAUDE SESSION
 # ═══════════════════════════════════════════════════════════════
 
-BUILD_STEP: Week 2, Day 2
+BUILD_STEP: Week 2, Day 3
 PHASE: Phase 1 — Foundation (Weeks 1-3)
 PHASE_GOAL: BA_State + run_eval.py + CI/CD + N01-N03 all passing
 LAST_GATE: M1 PASSED — Week 1
@@ -33,34 +33,27 @@ M8 Launch          PENDING      Sprint End
 M9 RLEF Active     PENDING      Post-Launch
 
 ## FILES_WRITTEN
-.gitignore                           ✓
-src/*/__init__.py                    ✓  16 files
-tests/__init__.py                    ✓
-CONTEXT.md                           ✓
-src/state/ba_state.py                ✓  Pydantic v2, 50+ fields, C4 C5 C8 C9 A1 A2 A3
-src/utils/seed_manager.py            ✓  C5 enforced
-src/utils/resource_governor.py       ✓  C4 enforced
-eval/run_eval.py                     ✓  150 questions, results.json
-tests/test_ci_gate.py                ✓  17/17 PASSED
-.github/workflows/tests.yml          ✓  GitHub Actions CI
-src/ingestion/pdf_ingestor.py        ✓  N01 — PDF/DOCX/CSV/XLSX/PNG/JPG + OCR
-tests/test_pdf_ingestor.py           ✓  24/24 PASSED
+.gitignore                               ✓
+src/*/__init__.py                        ✓  16 files
+tests/__init__.py                        ✓
+CONTEXT.md                               ✓
+src/state/ba_state.py                    ✓  Pydantic v2, 50+ fields, C4 C5 C8 C9 A1 A2 A3
+src/utils/seed_manager.py                ✓  C5 enforced
+src/utils/resource_governor.py           ✓  C4 enforced
+eval/run_eval.py                         ✓  150 questions, results.json
+tests/test_ci_gate.py                    ✓  17/17 PASSED
+.github/workflows/tests.yml              ✓  GitHub Actions CI
+src/ingestion/pdf_ingestor.py            ✓  N01 — PDF/DOCX/CSV/XLSX/PNG/JPG + OCR
+tests/test_pdf_ingestor.py               ✓  24/24 PASSED
+src/ingestion/section_tree_builder.py    ✓  N02 — hierarchical section map
+tests/test_section_tree.py               ✓  24/24 PASSED
 
 ## TEST RESULTS
-pytest tests/ -v → 41/41 PASSED
+pytest tests/ -v → 65/65 PASSED
 python eval/run_eval.py --dataset financebench --seed 42 → 0.0% stub correct
 
 ## KNOWN_ISSUES
 None — all clean.
-
-## FOLDER STRUCTURE (clean)
-D:\projects\finbench_agent\
-  src\agents\          src\explainability\   src\forensics\
-  src\ingestion\       src\ml\               src\output\
-  src\pipeline\        src\prompts\          src\quantitative\
-  src\retrieval\       src\rlef\             src\routing\
-  src\state\           src\ui\               src\utils\
-  tests\   eval\   data\   models\   outputs\   logs\
 
 ## CONSTRAINTS C1-C10 (ACTIVE — NEVER VIOLATE)
 C1: $0 cost permanently. No paid APIs ever.
@@ -82,11 +75,21 @@ pdfplumber, pymupdf, python-docx
 openpyxl, pandas, Pillow, pytesseract, pdf2image
 Tesseract-OCR: C:\Program Files\Tesseract-OCR\tesseract.exe
 
-## NEXT FILES TO BUILD — Week 2 continued
-1. src/ingestion/section_tree_builder.py  ← N02 (next session)
-2. tests/test_section_tree.py
-3. src/ingestion/chunker.py               ← N03
-4. tests/test_chunker.py
+## NEXT FILES TO BUILD — Week 2 Day 4
+1. src/ingestion/chunker.py       ← N03 (next session)
+2. tests/test_chunker.py
+
+## PIPELINE PROGRESS
+N01 PDF Ingestor          ✓ DONE
+N02 Section Tree Builder  ✓ DONE
+N03 Chunker + Indexer     ← NEXT
+N04 CART Router           PENDING Week 7
+N05 LR Difficulty         PENDING Week 7
+N06 SniperRAG             PENDING Week 4
+N07 BM25 Retriever        PENDING Week 5
+N08 BGE-M3                PENDING Week 6
+N09 RRF + Reranker        PENDING Week 7
+N10-N19                   PENDING Week 8+
 
 ## DAILY STARTUP — RUN THESE FIRST EVERY SESSION
 cd "D:\projects\finbench_agent"
