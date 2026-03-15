@@ -2,7 +2,7 @@
 # PASTE THIS ENTIRE FILE AT THE START OF EVERY NEW CLAUDE SESSION
 # ═══════════════════════════════════════════════════════════════
 
-BUILD_STEP: Week 3, Day 2
+BUILD_STEP: Week 4, Day 2
 PHASE: Phase 2 — Retrieval (Weeks 3-7)
 PHASE_GOAL: N04-N09 retrieval cascade complete
 LAST_GATE: M1 PASSED — Week 1
@@ -46,18 +46,19 @@ src/ingestion/pdf_ingestor.py            ✓  N01 — PDF/DOCX/CSV/XLSX/PNG/JPG 
 tests/test_pdf_ingestor.py               ✓  24/24 PASSED
 src/ingestion/section_tree_builder.py    ✓  N02 — hierarchical section map
 tests/test_section_tree.py               ✓  24/24 PASSED
-src/ingestion/chunker.py                 ✓  N03 — section-boundary chunks, BM25+ChromaDB
+src/ingestion/chunker.py                 ✓  N03 — section chunks, BM25+ChromaDB
 tests/test_chunker.py                    ✓  24/24 PASSED
-src/retrieval/sniper_rag.py              ✓  N06 — 22 regex patterns, FY prefix, ~50ms
+src/retrieval/sniper_rag.py              ✓  N06 — 22 regex patterns, ~50ms
 tests/test_sniper_rag.py                 ✓  24/24 PASSED
+src/retrieval/bm25_retriever.py          ✓  N07 — BM25 + LangChain wrapper
+tests/test_bm25.py                       ✓  24/24 PASSED
 
 ## TEST RESULTS
-pytest tests/ -q → 113/113 PASSED
-python eval/run_eval.py --dataset financebench --seed 42 → 0.0% stub correct
+pytest tests/ -q → 137/137 PASSED
 
 ## KNOWN_ISSUES
-RAM running at 13.25GB during tests — close unused apps before sessions.
-Still safe — below 14GB hard cap. ResourceGovernor ALERT is correct behaviour.
+RAM running ~13.2GB during tests — close unused apps before sessions.
+Safe — below 14GB hard cap. ALERT warnings are correct expected behaviour.
 
 ## CONSTRAINTS C1-C10 (ACTIVE — NEVER VIOLATE)
 C1: $0 cost permanently. No paid APIs ever.
@@ -77,34 +78,27 @@ numpy, psutil==5.9.8, scipy, datasets
 rich==13.7.1, python-dotenv==1.0.1, pyyaml
 pdfplumber, pymupdf, python-docx
 openpyxl, pandas, Pillow, pytesseract, pdf2image
-bm25s, chromadb, sentence-transformers
+bm25s, rank-bm25, chromadb, sentence-transformers
+langchain==1.2.12, langchain-community
 Tesseract-OCR: C:\Program Files\Tesseract-OCR\tesseract.exe
-NOTE: langchain + langgraph install at Week 4 (N07 session)
 
 ## PIPELINE PROGRESS
 N01 PDF Ingestor          ✓ DONE — pdf_ingestor.py
 N02 Section Tree Builder  ✓ DONE — section_tree_builder.py
 N03 Chunker + Indexer     ✓ DONE — chunker.py
-N06 SniperRAG             ✓ DONE — sniper_rag.py (22 patterns, FY prefix)
-N07 BM25 Retriever        ← NEXT (Week 4 — installs langchain)
-N08 BGE-M3 Semantic       PENDING Week 6
+N06 SniperRAG             ✓ DONE — sniper_rag.py (22 patterns)
+N07 BM25 Retriever        ✓ DONE — bm25_retriever.py (LangChain)
+N08 BGE-M3 Semantic       ← NEXT (Week 5-6)
 N09 RRF + Reranker        PENDING Week 7
 N04 CART Router           PENDING Week 7
 N05 LR Difficulty         PENDING Week 7
 N10-N19                   PENDING Week 8+
 
-## N06 SNIPER RAG — KEY FACTS
-- 22 financial metric patterns (income statement + balance sheet + cash flow)
-- Fires only for NUMERICAL and RATIO query types
-- Confidence threshold: 0.95 (below this → cascade to N07)
-- Year extraction handles: 2023, FY2023, FY 2023, fiscal year 2023
-- Speed: ~50ms, zero GPU, zero LLM call
-- Handles ~40% of FinanceBench numerical questions directly
-
-## NEXT SESSION — N07 BM25 Retriever
-Install: pip install langchain langchain-community
-File: src/retrieval/bm25_retriever.py
-Test: tests/test_bm25.py
+## NEXT SESSION — N08 BGE-M3 Semantic Retriever
+Install: pip install FlagEmbedding
+File: src/retrieval/bge_retriever.py
+Test: tests/test_bge_m3.py
+Note: Uses base BGE-M3 first. Fine-tuning happens at Week 6 (Gate M3).
 
 ## DAILY STARTUP — RUN THESE FIRST EVERY SESSION
 cd "D:\projects\finbench_agent"
