@@ -2,9 +2,9 @@
 # PASTE THIS ENTIRE FILE AT THE START OF EVERY NEW CLAUDE SESSION
 # ═══════════════════════════════════════════════════════════════
 
-BUILD_STEP: Week 2, Day 3
-PHASE: Phase 1 — Foundation (Weeks 1-3)
-PHASE_GOAL: BA_State + run_eval.py + CI/CD + N01-N03 all passing
+BUILD_STEP: Week 3, Day 1
+PHASE: Phase 2 — Retrieval (Weeks 4-7)
+PHASE_GOAL: N04-N09 retrieval cascade complete
 LAST_GATE: M1 PASSED — Week 1
 THIS_SESSION_TASK: [REPLACE EACH SESSION — one sentence only]
 PROJECT_GOAL: FinanceBench >=82% launch → 91-93% full stack
@@ -45,11 +45,13 @@ tests/test_ci_gate.py                    ✓  17/17 PASSED
 .github/workflows/tests.yml              ✓  GitHub Actions CI
 src/ingestion/pdf_ingestor.py            ✓  N01 — PDF/DOCX/CSV/XLSX/PNG/JPG + OCR
 tests/test_pdf_ingestor.py               ✓  24/24 PASSED
-src/ingestion/section_tree_builder.py    ✓  N02 — hierarchical section map
+src/ingestion/section_tree_builder.py    ✓  N02 — hierarchical section map, 5 key sections
 tests/test_section_tree.py               ✓  24/24 PASSED
+src/ingestion/chunker.py                 ✓  N03 — section-boundary chunks, BM25+ChromaDB
+tests/test_chunker.py                    ✓  24/24 PASSED
 
 ## TEST RESULTS
-pytest tests/ -v → 65/65 PASSED
+pytest tests/ -v → 89/89 PASSED
 python eval/run_eval.py --dataset financebench --seed 42 → 0.0% stub correct
 
 ## KNOWN_ISSUES
@@ -73,23 +75,35 @@ numpy, psutil==5.9.8, scipy, datasets
 rich==13.7.1, python-dotenv==1.0.1, pyyaml
 pdfplumber, pymupdf, python-docx
 openpyxl, pandas, Pillow, pytesseract, pdf2image
+bm25s, chromadb, sentence-transformers
 Tesseract-OCR: C:\Program Files\Tesseract-OCR\tesseract.exe
 
-## NEXT FILES TO BUILD — Week 2 Day 4
-1. src/ingestion/chunker.py       ← N03 (next session)
-2. tests/test_chunker.py
+## INGESTION PIPELINE — COMPLETE ✓
+N01 PDF Ingestor (pdf_ingestor.py)
+  → reads PDF/DOCX/CSV/XLSX/PNG/JPG + OCR
+  → writes raw_text, table_cells, heading_positions, company_name, doc_type, fiscal_year
 
-## PIPELINE PROGRESS
-N01 PDF Ingestor          ✓ DONE
-N02 Section Tree Builder  ✓ DONE
-N03 Chunker + Indexer     ← NEXT
-N04 CART Router           PENDING Week 7
-N05 LR Difficulty         PENDING Week 7
-N06 SniperRAG             PENDING Week 4
-N07 BM25 Retriever        PENDING Week 5
-N08 BGE-M3                PENDING Week 6
-N09 RRF + Reranker        PENDING Week 7
-N10-N19                   PENDING Week 8+
+N02 Section Tree Builder (section_tree_builder.py)
+  → reads heading_positions + raw_text
+  → writes section_tree (hierarchical JSON, 5 key sections tagged)
+
+N03 Chunker + Indexer (chunker.py)
+  → reads raw_text + section_tree
+  → splits at section boundaries → paragraphs → sentences
+  → enforces C8 prefix on every chunk
+  → builds BM25 index (data/bm25_index/)
+  → builds ChromaDB collection (data/chromadb/)
+  → writes chunk_count, bm25_index_path, chromadb_collection
+
+## NEXT FILES TO BUILD — Phase 2 Retrieval
+1. src/retrieval/sniper_rag.py          ← N06 (next session)
+2. tests/test_sniper_rag.py
+3. src/retrieval/bm25_retriever.py      ← N07
+4. tests/test_bm25.py
+5. src/retrieval/bge_retriever.py       ← N08 (Week 6 fine-tune)
+6. src/retrieval/rrf_reranker.py        ← N09
+7. src/routing/cart_router.py           ← N04
+8. src/routing/lr_difficulty.py         ← N05
 
 ## DAILY STARTUP — RUN THESE FIRST EVERY SESSION
 cd "D:\projects\finbench_agent"
