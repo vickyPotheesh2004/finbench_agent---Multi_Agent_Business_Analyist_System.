@@ -1,17 +1,34 @@
+<<<<<<< HEAD
 # Virtual environment
 venv/
 
 # Python cache
+=======
+# Virtual environment — never commit this
+venv/
+
+# Python cache files
+>>>>>>> fa813f75657d2aa83a91648ceb56cac8da2ebd2b
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+<<<<<<< HEAD
 
 # Data folders
 data/chromadb/
 data/bm25_index/
 
 # Database files (private RLEF data C9)
+=======
+.Python
+
+# Data folders — too large for git
+data/chromadb/
+data/bm25_index/
+
+# Database files — contain private RLEF data (C9)
+>>>>>>> fa813f75657d2aa83a91648ceb56cac8da2ebd2b
 *.db
 *.sqlite
 
@@ -20,7 +37,11 @@ outputs/
 logs/
 results.json
 
+<<<<<<< HEAD
 # Model files
+=======
+# Model files — too large
+>>>>>>> fa813f75657d2aa83a91648ceb56cac8da2ebd2b
 models/
 *.gguf
 *.bin
