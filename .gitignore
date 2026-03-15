@@ -1,0 +1,41 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Data folders
+data/chromadb/
+data/bm25_index/
+
+# Database files (private RLEF data C9)
+*.db
+*.sqlite
+
+# Output files
+outputs/
+logs/
+results.json
+
+# Model files
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# Environment variables
+.env
+
+# IDE folders
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Pytest cache
+.pytest_cache/
