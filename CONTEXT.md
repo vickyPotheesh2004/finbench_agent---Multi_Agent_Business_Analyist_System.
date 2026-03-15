@@ -6,15 +6,15 @@
 
 
 
-BUILD\_STEP: Week 1, Day 1
+BUILD\_STEP: Week 1, Day 2
 
 PHASE: Phase 1 — Foundation (Weeks 1-3)
 
 PHASE\_GOAL: BA\_State + run\_eval.py + CI/CD + N01-N03 all passing
 
-LAST\_GATE: None — starting fresh
+LAST\_GATE: M1 PASSED — Week 1
 
-THIS\_SESSION\_TASK: Build BAState schema + eval stub + CI gate tests
+THIS\_SESSION\_TASK: \[REPLACE EACH SESSION — one sentence only]
 
 PROJECT\_GOAL: FinanceBench >=82% launch → 91-93% full stack
 
@@ -46,7 +46,7 @@ A4: Target = Top 1 open-source, >=93% full stack
 
 \## GATE\_STATUS
 
-M1 Schema+Eval     IN PROGRESS  Week 1
+M1 Schema+Eval     PASSED       Week 1 ✓
 
 M2 Retrieval       PENDING      Week 7
 
@@ -68,19 +68,39 @@ M9 RLEF Active     PENDING      Post-Launch
 
 \## FILES\_WRITTEN
 
-.gitignore                      ✓
+.gitignore                           ✓
 
-src/\*/\_\_init\_\_.py               ✓  all 16 files
+src/\_\_init\_\_.py + all subfolders     ✓  16 files
 
-tests/\_\_init\_\_.py               ✓
+tests/\_\_init\_\_.py                    ✓
 
-CONTEXT.md                      ✓  (this file)
+CONTEXT.md                           ✓
+
+src/state/ba\_state.py                ✓  Pydantic v2, 50+ fields, C4 C5 C8 C9 A1 A2 A3
+
+src/utils/seed\_manager.py            ✓  C5 enforced, wraps all random calls
+
+src/utils/resource\_governor.py       ✓  C4 enforced, warn/alert/halt
+
+eval/run\_eval.py                     ✓  150 questions loaded, 0% stub, results.json
+
+tests/test\_ci\_gate.py                ✓  17/17 PASSED
+
+.github/workflows/tests.yml         ✓  GitHub Actions CI
+
+
+
+\## TEST RESULTS
+
+pytest tests/ -v → 17/17 PASSED
+
+python eval/run\_eval.py --dataset financebench --seed 42 → 0.0% (stub correct)
 
 
 
 \## KNOWN\_ISSUES
 
-None — clean start.
+None — all clean.
 
 
 
@@ -110,41 +130,27 @@ C10: Distribution via ollama pull YOUR\_USERNAME/financebench-expert
 
 \## TECH\_STACK\_INSTALLED
 
-pydantic==2.7.1
+pydantic==2.7.1, pytest==8.2.0, pytest-cov
 
-pytest==8.2.0
+numpy, psutil==5.9.8, scipy, datasets
 
-pytest-cov
-
-numpy
-
-psutil==5.9.8
-
-scipy
-
-datasets
-
-rich==13.7.1
-
-python-dotenv==1.0.1
-
-pyyaml
+rich==13.7.1, python-dotenv==1.0.1, pyyaml
 
 
 
-\## NEXT FILES TO BUILD (in order)
+\## NEXT FILES TO BUILD — Week 2
 
-1\. src/state/ba\_state.py          ← NEXT
+1\. src/ingestion/pdf\_ingestor.py       ← N01 (next session)
 
-2\. src/utils/seed\_manager.py
+2\. tests/test\_pdf\_ingestor.py
 
-3\. src/utils/resource\_governor.py
+3\. src/ingestion/section\_tree\_builder.py  ← N02
 
-4\. eval/run\_eval.py
+4\. tests/test\_section\_tree.py
 
-5\. tests/test\_ci\_gate.py
+5\. src/ingestion/chunker.py            ← N03
 
-6\. .github/workflows/tests.yml
+6\. tests/test\_chunker.py
 
 
 
