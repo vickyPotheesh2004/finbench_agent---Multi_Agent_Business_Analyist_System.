@@ -1,10 +1,17 @@
 """
 tests/test_bge_m3.py
 FinBench Multi-Agent Business Analyst AI
-PDR-BAAAI-001 Rev1.0 FINAL
 
 Tests for N08 — BGE-M3 Semantic Retriever
-Run: pytest tests/test_bge_m3.py -v
+
+!! WARNING — RAM CONSTRAINT !!
+This test loads a 500MB BGE model that stays in RAM.
+Running this file ALONE after other sessions will hit C4 14GB halt.
+
+CORRECT usage:  pytest tests\ -q          (full suite, fresh PowerShell)
+WRONG usage:    pytest tests\test_bge_m3.py -v  (standalone = C4 halt risk)
+
+Run: pytest tests\ -q --tb=no
 """
 
 import shutil
