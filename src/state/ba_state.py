@@ -6,6 +6,7 @@ PDR-BAAAI-001 Rev1.0 FINAL + Amendments A1-A4
 Constraints enforced:
   C4 — 14GB RAM hard cap
   C5 — seed=42 always
+  C7 — prompt_template must always be 'context_first'
   C8 — chunk metadata prefix format
   C9 — _rlef_ fields private, never in outputs
   A1 — PIV REJECT goes back to Planner
@@ -58,12 +59,10 @@ class ClarificationStatus(str, Enum):
     ANSWERED   = "answered"
 
 
-class PromptTemplate(str, Enum):
-    NUMERICAL = "numerical"
-    RATIO     = "ratio"
-    MULTI_DOC = "multi_doc"
-    TEXT      = "text"
-    FORENSIC  = "forensic"
+# NOTE: PromptTemplate enum REMOVED.
+# Per PDR C7 and Appendix R3: prompt_template is always the string
+# "context_first" — enforced by field_validator below.
+# It is NOT an enum of query types.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -143,12 +142,17 @@ class BAState(BaseModel):
     chromadb_collection: str = Field(default="")
 
     # ── Query ────────────────────────────────────────────────────────────
-    query:               str            = Field(default="")
-    query_type:          QueryType      = Field(default=QueryType.TEXT)
-    query_difficulty:    Difficulty     = Field(default=Difficulty.MEDIUM)
-    routing_path:        str            = Field(default="")
-    context_window_size: int            = Field(default=3, ge=1, le=10)
-    prompt_template:     PromptTemplate = Field(default=PromptTemplate.TEXT)
+    query:               str        = Field(default="")
+    query_type:          QueryType  = Field(default=QueryType.TEXT)
+    query_difficulty:    Difficulty = Field(default=Difficulty.MEDIUM)
+    routing_path:        str        = Field(default="")
+    context_window_size: int        = Field(default=3, ge=1, le=10)
+
+    # ── Prompt — N10 ─────────────────────────────────────────────────────
+    # C7: prompt_template MUST always be "context_first"
+    # Validator below enforces this — never change this value
+    assembled_prompt: str = Field(default="")
+    prompt_template:  str = Field(default="context_first")
 
     # ── Retrieval ────────────────────────────────────────────────────────
     sniper_hit:        bool  = Field(default=False)
@@ -157,9 +161,6 @@ class BAState(BaseModel):
     bm25_results:      List[Dict[str, Any]] = Field(default_factory=list)
     retrieval_stage_1: List[Dict[str, Any]] = Field(default_factory=list)
     retrieval_stage_2: List[Dict[str, Any]] = Field(default_factory=list)
-
-    # ── Prompt — N10 ─────────────────────────────────────────────────────
-    assembled_prompt: str = Field(default="")
 
     # ── PIV Loop — A1 + A2 ───────────────────────────────────────────────
     piv_max_attempts: int = Field(default=5)
@@ -191,10 +192,12 @@ class BAState(BaseModel):
     auditor_citations:        List[str] = Field(default_factory=list)
 
     # ── Clarification Engine — A3 ─────────────────────────────────────────
-    clarification_status:    ClarificationStatus = Field(default=ClarificationStatus.NOT_NEEDED)
-    clarification_questions: List[str]           = Field(default_factory=list)
-    clarification_answer:    str                 = Field(default="")
-    clarification_round:     int                 = Field(default=0)
+    clarification_status:    ClarificationStatus = Field(
+        default=ClarificationStatus.NOT_NEEDED
+    )
+    clarification_questions: List[str] = Field(default_factory=list)
+    clarification_answer:    str       = Field(default="")
+    clarification_round:     int       = Field(default=0)
 
     # ── Forensics — N13 ──────────────────────────────────────────────────
     forensic_flags:   List[str] = Field(default_factory=list)
@@ -232,7 +235,22 @@ class BAState(BaseModel):
             raise ValueError(f"[C5 VIOLATION] seed must be 42, got {v}")
         return v
 
-    @field_validator("analyst_attempt_count", "quant_attempt_count", "auditor_attempt_count")
+    @field_validator("prompt_template")
+    @classmethod
+    def enforce_context_first(cls, v: str) -> str:
+        """C7: prompt_template must always be 'context_first'."""
+        if v != "context_first":
+            raise ValueError(
+                f"[C7 VIOLATION] prompt_template must be 'context_first', "
+                f"got '{v}'. Retrieved context MUST appear before the question."
+            )
+        return v
+
+    @field_validator(
+        "analyst_attempt_count",
+        "quant_attempt_count",
+        "auditor_attempt_count",
+    )
     @classmethod
     def enforce_max_attempts(cls, v: int) -> int:
         if v > 5:
@@ -285,7 +303,11 @@ class BAState(BaseModel):
         self.auditor_rejection_reason = ""
         return self
 
-    def chunk_metadata_prefix(self, section: str = "{section}", page: str = "{page}") -> str:
+    def chunk_metadata_prefix(
+        self,
+        section: str = "{section}",
+        page:    str = "{page}",
+    ) -> str:
         """C8: COMPANY / DOCTYPE / FISCAL_YEAR / SECTION / PAGE"""
         return (
             f"{self.company_name} / {self.doc_type} / "
@@ -326,25 +348,37 @@ if __name__ == "__main__":
     rprint("\n[bold cyan]── BAState sanity check ──[/bold cyan]")
 
     s = BAState(session_id="sanity-001")
-    rprint(f"[green]✓[/green] Created | seed={s.seed} | max_attempts={s.piv_max_attempts}")
+    rprint(f"[green]✓[/green] Created | seed={s.seed} | "
+           f"max_attempts={s.piv_max_attempts} | "
+           f"prompt_template={s.prompt_template}")
 
     ram = s.check_ram()
     rprint(f"[green]✓[/green] C4 RAM={ram:.2f}GB")
 
+    # C5 enforced
     try:
         BAState(session_id="bad", seed=99)
     except Exception as e:
         rprint(f"[green]✓[/green] C5 enforced: {e}")
 
+    # C7 enforced
+    try:
+        BAState(session_id="bad-c7", prompt_template="not_context_first")
+    except Exception as e:
+        rprint(f"[green]✓[/green] C7 enforced: {e}")
+
+    # A2 enforced
     try:
         BAState(session_id="bad2", analyst_attempt_count=6)
     except Exception as e:
         rprint(f"[green]✓[/green] A2 enforced: {e}")
 
+    # C9 enforced
     safe = s.safe_dict()
     assert not any(k.startswith("_rlef_") for k in safe)
     rprint(f"[green]✓[/green] C9 enforced: no _rlef_ in safe_dict()")
 
+    # C8 prefix
     s.company_name = "Apple Inc"
     s.doc_type     = "10-K"
     s.fiscal_year  = "FY2023"
@@ -352,16 +386,25 @@ if __name__ == "__main__":
     assert "Apple Inc" in prefix and "10-K" in prefix and "FY2023" in prefix
     rprint(f"[green]✓[/green] C8 prefix: {prefix}")
 
+    # A3 clarification engine
     s2 = BAState(
-        session_id="clarify-test",
-        analyst_attempt_count=5,  analyst_piv_status=PIVStatus.REJECT,
-        quant_attempt_count=5,    quant_piv_status=PIVStatus.REJECT,
-        auditor_attempt_count=5,  auditor_piv_status=PIVStatus.REJECT,
+        session_id            = "clarify-test",
+        analyst_attempt_count = 5,
+        analyst_piv_status    = PIVStatus.REJECT,
+        quant_attempt_count   = 5,
+        quant_piv_status      = PIVStatus.REJECT,
+        auditor_attempt_count = 5,
+        auditor_piv_status    = PIVStatus.REJECT,
     )
     assert s2.needs_clarification() is True
     s2.reset_for_clarification("Use FY2023 GAAP figures")
     assert s2.analyst_attempt_count == 0
     assert s2.clarification_round   == 1
     rprint(f"[green]✓[/green] A3 clarification engine works")
+
+    # prompt_template defaults correctly
+    s3 = BAState(session_id="template-test")
+    assert s3.prompt_template == "context_first"
+    rprint(f"[green]✓[/green] prompt_template defaults to 'context_first'")
 
     rprint("\n[bold green]All checks passed. BAState ready.[/bold green]\n")

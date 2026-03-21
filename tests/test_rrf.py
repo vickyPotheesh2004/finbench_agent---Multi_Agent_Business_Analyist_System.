@@ -2,11 +2,11 @@
 tests/test_rrf.py
 FinBench Multi-Agent Business Analyst AI
 
-Tests for N09 — RRF Merge + Cross-Encoder Reranker
+Tests for N09 -- RRF Merge + Cross-Encoder Reranker
 
-!! RAM NOTE !!
+RAM NOTE:
 Cross-encoder loads ~90MB model.
-Run as part of full suite only: pytest tests\ -q
+Run as part of full suite only: pytest tests/ -q
 Never run standalone after BGE tests in same session.
 
 24 tests covering:

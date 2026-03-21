@@ -10,6 +10,9 @@ Tests 11 and 12 are designed to CATCH violations:
   Test 11: mock output containing _rlef_ — MUST be detected
   Test 12: mock config with seed=99   — MUST be detected
 All 12 must PASS against correct code.
+
+NOTE: PromptTemplate enum removed from ba_state.py — prompt_template
+is always the string "context_first" enforced by C7 validator.
 """
 
 import json
@@ -26,7 +29,6 @@ from src.state.ba_state import (
     ClarificationStatus,
     Difficulty,
     PIVStatus,
-    PromptTemplate,
     QueryType,
     ResourceGovernor,
 )
@@ -118,10 +120,10 @@ class TestC8ChunkMetadata:
     def test_10_chunk_prefix_has_all_5_fields(self):
         """C8: prefix must contain COMPANY/DOCTYPE/FISCAL_YEAR/SECTION/PAGE"""
         s = BAState(
-            session_id="t10",
-            company_name="Goldman Sachs",
-            doc_type="10-K",
-            fiscal_year="FY2023",
+            session_id   = "t10",
+            company_name = "Goldman Sachs",
+            doc_type     = "10-K",
+            fiscal_year  = "FY2023",
         )
         prefix = s.chunk_metadata_prefix(section="MD&A", page="47")
         assert "Goldman Sachs" in prefix
@@ -147,7 +149,7 @@ class TestCICDGates:
             "answer":      "99.8 billion",
             "_rlef_grade": 4,
         }
-        mock_json      = json.dumps(mock_output)
+        mock_json       = json.dumps(mock_output)
         violation_found = "_rlef_" in mock_json
         assert violation_found is True, (
             "CI GATE FAILURE: _rlef_ in output was NOT detected."
@@ -158,11 +160,25 @@ class TestCICDGates:
         C5 CI GATE: Must detect seed != 42 in a mock config.
         This test is DESIGNED to catch the violation.
         """
-        mock_config    = {"seed": 99, "model": "llama3.1:8b"}
+        mock_config     = {"seed": 99, "model": "llama3.1:8b"}
         violation_found = mock_config.get("seed") != 42
         assert violation_found is True, (
             "CI GATE FAILURE: seed=99 was NOT detected as a violation."
         )
+
+    def test_13_c7_prompt_template_must_be_context_first(self):
+        """
+        C7 CI GATE: prompt_template must always be 'context_first'.
+        Attempts to set any other value must be rejected.
+        """
+        with pytest.raises((ValueError, Exception)) as exc:
+            BAState(session_id="c7-gate", prompt_template="numerical")
+        assert "C7" in str(exc.value) or "context_first" in str(exc.value)
+
+    def test_14_c7_default_prompt_template_is_context_first(self):
+        """C7: Default prompt_template must be 'context_first'"""
+        s = BAState(session_id="c7-default")
+        assert s.prompt_template == "context_first"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -171,39 +187,45 @@ class TestCICDGates:
 
 class TestAmendments:
 
-    def test_13_a2_max_attempts_is_5(self):
+    def test_15_a2_max_attempts_is_5(self):
         """A2: piv_max_attempts must default to 5"""
-        s = BAState(session_id="t13")
+        s = BAState(session_id="t15")
         assert s.piv_max_attempts == 5
 
-    def test_14_a2_attempt_count_6_rejected(self):
+    def test_16_a2_attempt_count_6_rejected(self):
         """A2: attempt_count > 5 must raise"""
         with pytest.raises((ValueError, Exception)) as exc:
-            BAState(session_id="t14", analyst_attempt_count=6)
+            BAState(session_id="t16", analyst_attempt_count=6)
         assert "A2" in str(exc.value) or "attempt" in str(exc.value).lower()
 
-    def test_15_a3_clarification_false_by_default(self):
+    def test_17_a3_clarification_false_by_default(self):
         """A3: needs_clarification() must be False on fresh state"""
-        s = BAState(session_id="t15")
+        s = BAState(session_id="t17")
         assert s.needs_clarification() is False
 
-    def test_16_a3_clarification_true_when_all_pods_exhausted(self):
+    def test_18_a3_clarification_true_when_all_pods_exhausted(self):
         """A3: needs_clarification() True when all 3 pods at 5 REJECTs"""
         s = BAState(
-            session_id="t16",
-            analyst_attempt_count=5, analyst_piv_status=PIVStatus.REJECT,
-            quant_attempt_count=5,   quant_piv_status=PIVStatus.REJECT,
-            auditor_attempt_count=5, auditor_piv_status=PIVStatus.REJECT,
+            session_id            = "t18",
+            analyst_attempt_count = 5,
+            analyst_piv_status    = PIVStatus.REJECT,
+            quant_attempt_count   = 5,
+            quant_piv_status      = PIVStatus.REJECT,
+            auditor_attempt_count = 5,
+            auditor_piv_status    = PIVStatus.REJECT,
         )
         assert s.needs_clarification() is True
 
-    def test_17_a3_reset_clears_all_counters(self):
+    def test_19_a3_reset_clears_all_counters(self):
         """A3: reset_for_clarification() must reset all counters to 0"""
         s = BAState(
-            session_id="t17",
-            analyst_attempt_count=5, analyst_piv_status=PIVStatus.REJECT,
-            quant_attempt_count=5,   quant_piv_status=PIVStatus.REJECT,
-            auditor_attempt_count=5, auditor_piv_status=PIVStatus.REJECT,
+            session_id            = "t19",
+            analyst_attempt_count = 5,
+            analyst_piv_status    = PIVStatus.REJECT,
+            quant_attempt_count   = 5,
+            quant_piv_status      = PIVStatus.REJECT,
+            auditor_attempt_count = 5,
+            auditor_piv_status    = PIVStatus.REJECT,
         )
         s.reset_for_clarification("Use FY2023 GAAP consolidated figures")
         assert s.analyst_attempt_count == 0
