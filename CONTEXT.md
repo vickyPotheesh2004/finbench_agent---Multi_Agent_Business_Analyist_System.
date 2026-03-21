@@ -2,10 +2,10 @@
 # PASTE THIS ENTIRE FILE AT THE START OF EVERY NEW CLAUDE SESSION
 # ═══════════════════════════════════════════════════════════════
 
-BUILD_STEP: Week 9, Day 3
+BUILD_STEP: Week 10, Day 1
 PHASE: Phase 3 — Analysis Engine (Weeks 8-11)
-PHASE_GOAL: N15 PIV Mediator — final analysis node
-LAST_GATE: M1 PASSED | M4 PENDING — check after N15
+PHASE_GOAL: N16 SHAP + Causal DAG
+LAST_GATE: M1 PASSED | M4 PENDING — needs N16-N19 + pipeline wire-up
 THIS_SESSION_TASK: [REPLACE EACH SESSION — one sentence only]
 PROJECT_GOAL: FinanceBench >=82% launch → 91-93% full stack
 $0 cost forever | 100% local | Self-improving via RLEF/DPO
@@ -27,7 +27,7 @@ A6: Phase 8 live benchmark + Papers With Code
 M1 Schema+Eval     PASSED       Week 1 ✓
 M2 Retrieval       PENDING      Week 7
 M3 BGE-M3          PENDING      Week 6
-M4 Full Pipeline   PENDING      After N15 this session
+M4 Full Pipeline   PENDING      After N16-N19 + pipeline
 M5 LLM SFT         PENDING      Week 12
 M6 XGB-Arbiter     PENDING      Week 14
 M7 Pre-Sprint      PENDING      Week 15
@@ -63,11 +63,13 @@ src/agents/triguard.py                   ✓  N13 Benford+IF
 tests/test_triguard.py                   ✓  24/24
 src/agents/auditor_pod.py                ✓  N14 BLIND+contradiction
 tests/test_auditor_pod.py                ✓  24/24
+src/agents/piv_mediator.py               ✓  N15 unanimous/majority/disagree
+tests/test_piv_mediator.py               ✓  24/24
 DECISIONS.md                             ✓
 src/live_data/[stubs]                    ✓
 
 ## TEST RESULTS
-pytest tests\ -q → 355/355 PASSED zero warnings (32.32s)
+pytest tests\ -q → 379/379 PASSED zero warnings (35.39s)
 
 ## PIPELINE PROGRESS
 N01 ✓  N02 ✓  N03 ✓  Ingestion
@@ -78,30 +80,29 @@ N11 ✓                Analyst Pod + PIV Loop
 N12 ✓                CFO/Quant Pod
 N13 ✓                TriGuard Forensics
 N14 ✓                Auditor Pod BLIND
-N15 ←  NEXT         PIV Mediator
-N16-N19              Pending
+N15 ✓                PIV Mediator
+N16 ←  NEXT         SHAP + Causal DAG
+N17                  XGBoost Arbiter (Gate M6)
+N18                  RLEF JEE Engine
+N19                  Output Generator
 
-## NEXT SESSION — N15 PIV Mediator
-File: src/agents/piv_mediator.py
-Test: tests/test_piv_mediator.py
-What: Arbitrates between N11 + N12 + N14 candidates
-  Step 1: Extract core answer from each pod
-  Step 2: Check if any 2 pods agree (majority vote)
-  Step 3: 2+ agree → majority winner selected
-  Step 4: All 3 disagree → 3rd retrieval + LLM mediation
-  Step 5: Writes final_answer_pre_xgb + agreement_status + confidence_score
-  Max 2 mediation rounds, iteration_count cap = 5
-
-Agreement logic:
-  unanimous  → all 3 agree → highest confidence answer
-  majority   → 2 of 3 agree → majority answer selected
-  full_disagree → all different → mediator LLM resolves
-
-Writes to BAState:
-  final_answer_pre_xgb
-  agreement_status (unanimous/majority/full_disagree)
-  confidence_score
-  winning_pod
+## NEXT SESSION — N16 SHAP + Causal DAG
+File: src/explainability/shap_dag.py
+Test: tests/test_shap_dag.py
+What: Feature attribution + causal financial graph
+  SHAP TreeExplainer — which chunks most influenced answer
+    500-row hard cap enforced (C4)
+    Uses XGBoost surrogate model trained on retrieval features
+    Output: shap_values dict, feature_importance dict
+  Causal DAG — networkx DiGraph
+    Standard financial causal chain:
+    Revenue → Gross Profit → Operating Income → Net Income → EPS
+    Nodes coloured by value (positive=green, negative=red)
+    Exports to: state.causal_dag_path (PNG path)
+  Writes to BAState:
+    shap_values        — dict of feature → shap value
+    feature_importance — dict of feature → importance score
+    causal_dag_path    — path to PNG file
 
 ## CONSTRAINTS C1-C10
 C1: $0. C2: local. C3: Llama3.1 8B.
@@ -112,4 +113,4 @@ C8: metadata prefix. C9: no _rlef_. C10: ollama pull.
 ## DAILY STARTUP
 cd "D:\projects\finbench_agent"
 venv\scripts\activate
-pytest tests\ -q --tb=no  → must show 355/355
+pytest tests\ -q --tb=no  → must show 379/379
