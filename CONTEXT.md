@@ -2,10 +2,10 @@
 # PASTE THIS ENTIRE FILE AT THE START OF EVERY NEW CLAUDE SESSION
 # ═══════════════════════════════════════════════════════════════
 
-BUILD_STEP: Week 6, Day 2
-PHASE: Phase 2 — Retrieval (Weeks 3-7)
-PHASE_GOAL: N04-N09 retrieval cascade complete
-LAST_GATE: M1 PASSED — Week 1
+BUILD_STEP: Week 7, Day 1
+PHASE: Phase 2 — Retrieval (Weeks 3-7) — COMPLETE
+PHASE_GOAL: Phase 3 — Analysis Engine starts (Weeks 8-11)
+LAST_GATE: M1 PASSED — Week 1 | M2 PENDING — check this week
 THIS_SESSION_TASK: [REPLACE EACH SESSION — one sentence only]
 PROJECT_GOAL: FinanceBench >=82% launch → 91-93% full stack
 $0 cost forever | 100% local | Self-improving via RLEF/DPO
@@ -25,7 +25,7 @@ A6: Phase 8 live benchmark + Papers With Code submission
 
 ## GATE_STATUS
 M1 Schema+Eval     PASSED       Week 1 ✓
-M2 Retrieval       PENDING      Week 7
+M2 Retrieval       PENDING      Check now — all retrieval nodes done
 M3 BGE-M3          PENDING      Week 6
 M4 Full Pipeline   PENDING      Week 9
 M5 LLM SFT         PENDING      Week 12
@@ -58,13 +58,15 @@ src/retrieval/rrf_reranker.py            ✓  N09 RRF+CrossEncoder
 tests/test_rrf.py                        ✓  24/24
 src/routing/cart_router.py               ✓  N04 CART 200 questions
 tests/test_cart_router.py                ✓  24/24
+src/routing/lr_difficulty.py             ✓  N05 LR 150 questions
+tests/test_lr_difficulty.py              ✓  24/24
 DECISIONS.md                             ✓  All discussion decisions
 src/live_data/[stubs]                    ✓  Phase 7A stubs
 src/live_data/plugin_registry.yaml       ✓  18 APIs configured
 eval/run_live_eval.py                    ✓  STUB Phase 8
 
 ## TEST RESULTS
-pytest tests\ -q → 209/209 PASSED (74.02s)
+pytest tests\ -q → 233/233 PASSED (32.60s)
 
 ## RAM FIX — CRITICAL
 PYTEST_RUNNING=1 in pytest.ini → ResourceGovernor uses 15.4GB in tests
@@ -93,35 +95,52 @@ langchain==1.2.12, langchain-community
 BGE model cached: BAAI/bge-small-en-v1.5 (384-dim)
 CrossEncoder cached: cross-encoder/ms-marco-MiniLM-L-6-v2 (90MB)
 CART model saved: models/cart_router.pkl
+LR model saved:   models/lr_difficulty.pkl
 Tesseract-OCR installed
 
-## PIPELINE PROGRESS
-N01 ✓  N02 ✓  N03 ✓
-N04 ✓  CART Router — 5 classes, 200 questions, 100% accuracy
-N06 ✓  N07 ✓  N08 ✓  N09 ✓
-N05 LR Difficulty   ← NEXT SESSION
-N10-N19             PENDING Week 8+
+## PIPELINE PROGRESS — PHASE 2 RETRIEVAL COMPLETE
+N01 ✓  N02 ✓  N03 ✓  Ingestion pipeline
+N04 ✓  N05 ✓         Routing — CART + LR
+N06 ✓  N07 ✓  N08 ✓  N09 ✓  Retrieval cascade
 
-## ROUTING BUILT — N04 complete
-numerical  → SniperRAG first → BM25 → BGE → RRF
-ratio      → BM25 → BGE → RRF → Quant pod
-multi_doc  → BM25 → BGE → RRF → wide context (5 chunks)
-text       → BGE lead → BM25 → RRF → narrative
-forensic   → BM25 → BGE → RRF → TriGuard activated
+## FULL ROUTING LOGIC — N04 + N05
+N04 sets: query_type (5 classes) + routing_path + context_window_size
+N05 sets: query_difficulty (3 levels)
+          if HARD → overrides context_window_size to 5
 
-## NEXT SESSION — N05 LR Difficulty Predictor
-File: src/routing/lr_difficulty.py
-Test: tests/test_lr_difficulty.py
-What: sklearn LogisticRegression — classifies query into 3 difficulty levels
-      easy / medium / hard
-      hard → wider context + 2 extra PIV rounds + lower HITL threshold
-      Trained on 150 labelled questions (50 per class)
-      Saved with joblib alongside cart_router.pkl
+numerical  + easy   → SniperRAG → BM25 → BGE → RRF  top_k=3 retries=2
+numerical  + hard   → SniperRAG → BM25 → BGE → RRF  top_k=5 retries=5
+ratio      + medium → BM25 → BGE → RRF → Quant pod  top_k=3 retries=3
+multi_doc  + hard   → BM25 → BGE → RRF wide context top_k=5 retries=5
+text       + easy   → BGE lead → BM25 → RRF          top_k=3 retries=2
+forensic   + hard   → BM25 → BGE → RRF → TriGuard   top_k=5 retries=5
+
+## NEXT SESSION — N10 Prompt Assembler
+File: src/prompts/assembler.py
+Test: tests/test_prompt_assembler.py
+What: Jinja2 — 5 prompt templates (numerical/ratio/multi_doc/text/forensic)
+      Context ALWAYS before question (C7 enforced)
+      Metadata-aware formatter — units, fiscal year, citations
+      Writes assembled_prompt to BAState
+Install needed: pip install jinja2 (likely already installed)
 
 ## DAILY STARTUP
 cd "D:\projects\finbench_agent"
 venv\scripts\activate
-pytest tests\ -q --tb=no  → must show 209/209
+pytest tests\ -q --tb=no  → must show 233/233
 
 ## EVAL COMMAND
 python eval/run_eval.py --dataset financebench --seed 42
+
+## SCORE PROGRESSION REFERENCE
+Raw Llama 8B:                        ~52%
++ Context-first + Metadata chunks:   ~74%
++ BM25 hybrid search:                ~76%
++ Fine-tuned BGE-M3 + SectionTree:   ~83%
++ SniperRAG direct table extraction: ~85%
++ LLM SFT fine-tune:                 ~87%
++ DPO Cycle 1 (beta=0.1):           ~88%
++ XGB-Arbiter (Gate M6):             ~91%
++ K-Means DPO + Sprint:              ~92%
++ Post-launch RLEF 3 cycles:         ~93%
+HARD CEILING Llama 8B: 94-95%
