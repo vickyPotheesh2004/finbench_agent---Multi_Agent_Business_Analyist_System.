@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import psutil
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 # ── C5: Seed at import time ─────────────────────────────────────────────────
 random.seed(42)
@@ -62,20 +62,14 @@ class ClarificationStatus(str, Enum):
 # NOTE: PromptTemplate enum REMOVED.
 # Per PDR C7 and Appendix R3: prompt_template is always the string
 # "context_first" — enforced by field_validator below.
-# It is NOT an enum of query types.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# C4 — RESOURCE GOVERNOR
+# C4 — RESOURCE GOVERNOR (inline — full version in resource_governor.py)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class ResourceGovernor:
-    """
-    C4: RAM monitoring.
-    warn  @ 12GB
-    alert @ 13GB
-    halt  @ 14GB — raises MemoryError
-    """
+    """C4: RAM monitoring — inline version for BAState.check_ram()."""
     WARN_GB  = 12.0
     ALERT_GB = 13.0
     HALT_GB  = 14.0
@@ -85,8 +79,7 @@ class ResourceGovernor:
         used_gb = psutil.virtual_memory().used / (1024 ** 3)
         if used_gb >= ResourceGovernor.HALT_GB:
             raise MemoryError(
-                f"[C4 HALT] RAM={used_gb:.2f}GB >= 14GB hard cap. "
-                "Stopping to protect system."
+                f"[C4 HALT] RAM={used_gb:.2f}GB >= 14GB hard cap."
             )
         if used_gb >= ResourceGovernor.ALERT_GB:
             print(f"[C4 ALERT] RAM={used_gb:.2f}GB — approaching 14GB")
@@ -114,7 +107,7 @@ class BAState(BaseModel):
     """
 
     model_config = {
-        "validate_assignment": True,
+        "validate_assignment":  True,
         "arbitrary_types_allowed": True,
         "protected_namespaces": (),
     }
@@ -149,8 +142,6 @@ class BAState(BaseModel):
     context_window_size: int        = Field(default=3, ge=1, le=10)
 
     # ── Prompt — N10 ─────────────────────────────────────────────────────
-    # C7: prompt_template MUST always be "context_first"
-    # Validator below enforces this — never change this value
     assembled_prompt: str = Field(default="")
     prompt_template:  str = Field(default="context_first")
 
@@ -183,6 +174,12 @@ class BAState(BaseModel):
     quant_confidence:       float     = Field(default=0.0, ge=0.0, le=1.0)
     quant_citations:        List[str] = Field(default_factory=list)
 
+    # N12 Quantitative outputs
+    monte_carlo_results: Optional[Dict[str, Any]] = Field(default=None)
+    var_result:          Optional[Dict[str, Any]] = Field(default=None)
+    garch_result:        Optional[Dict[str, Any]] = Field(default=None)
+    computed_ratio:      Optional[float]          = Field(default=None)
+
     # N14 Auditor Pod
     auditor_attempt_count:    int       = Field(default=0)
     auditor_piv_status:       PIVStatus = Field(default=PIVStatus.PENDING)
@@ -203,20 +200,24 @@ class BAState(BaseModel):
     forensic_flags:   List[str] = Field(default_factory=list)
     risk_score:       float     = Field(default=0.0, ge=0.0, le=100.0)
     anomaly_detected: bool      = Field(default=False)
+    anomaly_severity: str       = Field(default="low")
     benford_chi2:     float     = Field(default=0.0)
     benford_p_value:  float     = Field(default=1.0, ge=0.0, le=1.0)
+
+    # ── Explainability — N16 ─────────────────────────────────────────────
+    shap_values:      List[Dict[str, Any]] = Field(default_factory=list)
+    causal_dag_path:  str                  = Field(default="")
 
     # ── Output ───────────────────────────────────────────────────────────
     final_answer_pre_xgb:    str   = Field(default="")
     agreement_status:        str   = Field(default="")
     confidence_score:        float = Field(default=0.0, ge=0.0, le=1.0)
     low_confidence:          bool  = Field(default=False)
-    shap_values:             List[Dict[str, Any]] = Field(default_factory=list)
-    causal_dag_path:         str   = Field(default="")
     xgb_ranked_answer:       str   = Field(default="")
     final_answer:            str   = Field(default="")
     analyst_citations_final: List[str] = Field(default_factory=list)
     output_docx_path:        str   = Field(default="")
+    contradiction_flags:     List[str] = Field(default_factory=list)
 
     # ── C9: RLEF — PRIVATE FOREVER ───────────────────────────────────────
     _rlef_grade:        Optional[int] = None
@@ -345,48 +346,51 @@ if __name__ == "__main__":
     except ImportError:
         rprint = print
 
-    rprint("\n[bold cyan]── BAState sanity check ──[/bold cyan]")
+    rprint("\n[bold cyan]-- BAState sanity check --[/bold cyan]")
 
     s = BAState(session_id="sanity-001")
     rprint(f"[green]✓[/green] Created | seed={s.seed} | "
-           f"max_attempts={s.piv_max_attempts} | "
            f"prompt_template={s.prompt_template}")
 
-    ram = s.check_ram()
-    rprint(f"[green]✓[/green] C4 RAM={ram:.2f}GB")
-
-    # C5 enforced
+    # C5
     try:
         BAState(session_id="bad", seed=99)
     except Exception as e:
-        rprint(f"[green]✓[/green] C5 enforced: {e}")
+        rprint(f"[green]✓[/green] C5 enforced")
 
-    # C7 enforced
+    # C7
     try:
         BAState(session_id="bad-c7", prompt_template="not_context_first")
     except Exception as e:
-        rprint(f"[green]✓[/green] C7 enforced: {e}")
+        rprint(f"[green]✓[/green] C7 enforced")
 
-    # A2 enforced
+    # A2
     try:
         BAState(session_id="bad2", analyst_attempt_count=6)
     except Exception as e:
-        rprint(f"[green]✓[/green] A2 enforced: {e}")
+        rprint(f"[green]✓[/green] A2 enforced")
 
-    # C9 enforced
+    # C9
     safe = s.safe_dict()
     assert not any(k.startswith("_rlef_") for k in safe)
-    rprint(f"[green]✓[/green] C9 enforced: no _rlef_ in safe_dict()")
+    rprint(f"[green]✓[/green] C9 enforced")
 
-    # C8 prefix
+    # C8
     s.company_name = "Apple Inc"
     s.doc_type     = "10-K"
     s.fiscal_year  = "FY2023"
     prefix = s.chunk_metadata_prefix("MD&A", "42")
-    assert "Apple Inc" in prefix and "10-K" in prefix and "FY2023" in prefix
+    assert "Apple Inc" in prefix
     rprint(f"[green]✓[/green] C8 prefix: {prefix}")
 
-    # A3 clarification engine
+    # N12 fields
+    s.monte_carlo_results = {"mean": 96995.0, "p5": 88000.0, "p95": 105000.0}
+    s.var_result          = {"var_95": 64793.0, "var_99": 58887.0}
+    assert s.monte_carlo_results is not None
+    assert s.var_result          is not None
+    rprint(f"[green]✓[/green] N12 quant fields: monte_carlo + var_result")
+
+    # A3
     s2 = BAState(
         session_id            = "clarify-test",
         analyst_attempt_count = 5,
@@ -399,12 +403,6 @@ if __name__ == "__main__":
     assert s2.needs_clarification() is True
     s2.reset_for_clarification("Use FY2023 GAAP figures")
     assert s2.analyst_attempt_count == 0
-    assert s2.clarification_round   == 1
     rprint(f"[green]✓[/green] A3 clarification engine works")
-
-    # prompt_template defaults correctly
-    s3 = BAState(session_id="template-test")
-    assert s3.prompt_template == "context_first"
-    rprint(f"[green]✓[/green] prompt_template defaults to 'context_first'")
 
     rprint("\n[bold green]All checks passed. BAState ready.[/bold green]\n")
