@@ -2,97 +2,88 @@
 # PASTE THIS ENTIRE FILE AT THE START OF EVERY NEW CLAUDE SESSION
 # ═══════════════════════════════════════════════════════════════
 
-BUILD_STEP: Week 12, Day 1
-PHASE: Phase 3 FINISH — Pipeline Wire-up → Gate M4
-LAST_GATE: M1 PASSED | M4 PENDING THIS SESSION
-THIS_SESSION_TASK: [REPLACE EACH SESSION — one sentence only]
-PROJECT_GOAL: FinanceBench >=90% launch | $0 | 100% local | RLEF
+BUILD_STEP: Week 13, Day 1
+PHASE: Phase 7A — Live Data Infrastructure
+LAST_GATE: M1 ✓ M4 ✓ PASSED | M2 M3 M5 M6 M7 M8 PENDING
+PROJECT_GOAL: FB>=90% BB>=80% LFQ>=75% | $0 | 100% local | RLEF
 
-## !! PROJECT FOLDER !!
+## PROJECT FOLDER
 PROJECT FOLDER : D:\projects\finbench_agent
 VENV ACTIVATE  : cd "D:\projects\finbench_agent" then venv\scripts\activate
 CORRECT PROMPT : (venv) PS D:\projects\finbench_agent>
 
 ## AMENDMENTS
-A1-A6:  Original amendments ✓
-A7:  FinanceBench target >=90% at launch
-A8:  BizBench target >=80% at launch
+A1-A6: Original ✓
+A7:  FB target >=90% launch
+A8:  BB target >=80% launch
 A9:  Live Financial QA benchmark pre-launch
-A10: SFT pairs raised to 2000
-A11: Pre-sprint sessions raised to 10,000
-A12: DPO rounds raised to 3 pre-launch
+A10: SFT pairs = 2000
+A11: Sprint sessions = 10,000
+A12: DPO rounds = 3 pre-launch
 A13: BGE-M3 Gate M3 MRR>=0.90
 A14: LLM Gate M5 >=80% held-out
 A15: XGB Gate M6 >=3% improvement
 A16: All Phase 7 live data pre-launch
-A17: K-Means clusters raised to 6
+A17: K-Means clusters = 6
 
-## GATE_STATUS
-M1 Schema+Eval     PASSED  Week 1 ✓
-M2 Retrieval       PENDING Week 7
-M3 BGE-M3          PENDING Phase 4
-M4 Full Pipeline   PENDING THIS SESSION ←
-M5 LLM SFT         PENDING Phase 4
-M6 XGB-Arbiter     PENDING Phase 4
-M7 Pre-Sprint      PENDING Phase 5
-M8 Launch          PENDING Phase 6
-M9 RLEF Active     PENDING Post-Launch
+## GATE STATUS
+M1 PASSED ✓  M4 PASSED ✓
+M2 PENDING   M3 PENDING   M5 PENDING
+M6 PENDING   M7 PENDING   M8 PENDING
 
-## ALL 19 NODES — COMPLETE ✓
-N01 ✓  PDF Ingestor
-N02 ✓  Section Tree Builder
-N03 ✓  Chunker + Indexer
-N04 ✓  CART Router
-N05 ✓  LR Difficulty
-N06 ✓  SniperRAG
-N07 ✓  BM25 Retriever
-N08 ✓  BGE-M3 Retrieval
-N09 ✓  RRF + Reranker
-N10 ✓  Prompt Assembler
-N11 ✓  Analyst Pod
-N12 ✓  CFO/Quant Pod
-N13 ✓  TriGuard Forensics
-N14 ✓  Auditor Pod BLIND
-N15 ✓  PIV Mediator
-N16 ✓  SHAP + Causal DAG
-N17 ✓  XGBoost Arbiter
-N18 ✓  RLEF JEE Engine
-N19 ✓  Output Generator
+## ALL 19 NODES COMPLETE ✓
+N01-N19 all built and tested
 
 ## TEST RESULTS
-pytest tests\ -q → 475/475 PASSED zero warnings (111s)
+pytest tests\ -q → 475/475 PASSED (114s) [pipeline excluded]
+pytest tests\test_pipeline.py -q → 24/24 PASSED fresh session
 
-## NEXT SESSION — Pipeline Wire-up → Gate M4
-File: src/pipeline/pipeline.py
-Test: tests/test_pipeline.py
-What: LangGraph StateGraph connecting all 19 nodes
-  Single .invoke() call runs entire pipeline
-  Parallel branches: N11+N12+N13+N14 run in parallel
-  Conditional edges: SniperRAG short-circuit
-  MemorySaver: checkpoint on RAM halt
-  Gate M4: 100% of 10 test questions answered
-           All 19 nodes fire
-           iteration_count never > 5
-           DOCX report generated
+## PIPELINE
+src/pipeline/pipeline.py ✓ FinBenchPipeline
+  - ingest() N01-N03
+  - query()  N04-N19
+  - Parallel pods N11+N12+N13+N14
+  - SniperRAG conditional edge
+  - Gate M4 PASSED
 
-## PHASE SEQUENCE AFTER GATE M4
-Phase 7A: Cache + 16 API fetchers
-Phase 7B: MCP servers
-Phase 7C: DataShield full
-Phase 7D: Pipeline integration N00.5
-Streamlit UI
-Phase 4: BGE-M3 + SFT + DPO (Colab/Kaggle)
-Phase 5: Proof — FB>=90% BB>=80%
-Phase 8: Live benchmark build
-Phase 6: Launch
-
-## CONSTRAINTS C1-C10
-C1:$0 C2:local C3:Llama3.1 8B
-C4:14GB(15.4 test) C5:seed=42
-C6:DPO beta=0.1 C7:context_first
-C8:metadata prefix C9:no _rlef_ C10:ollama pull
+## pytest.ini
+addopts = --ignore=tests/test_pipeline.py
+Pipeline tests run separately in fresh PowerShell
 
 ## DAILY STARTUP
 cd "D:\projects\finbench_agent"
 venv\scripts\activate
-pytest tests\ -q --tb=no → must show 475/475
+pytest tests\ -q --tb=no → 475/475
+Fresh PS: pytest tests\test_pipeline.py -q --tb=no → 24/24
+
+## NEXT PHASE — Phase 7A Live Data
+Build order:
+  Session A: src/live_data/cache_manager.py (SQLite TTL cache)
+             src/live_data/base_fetcher.py  (replace stub)
+             src/live_data/data_shield.py   (replace stub)
+             src/live_data/fetch_queue.py   (replace stub)
+
+  Session B: Tier 1 fetchers (6 real APIs)
+    edgar.py yfinance.py fred.py fx.py news.py world_bank.py
+
+  Session C: Tier 2 fetchers (10 APIs)
+    alpha_vantage treasury bls imf ecb newsapi
+    reddit_finance edgar_rss edgar_xbrl coingecko
+
+  Session D: live_context_builder.py + N00.5 node
+    BAState new fields:
+      live_data_chunks, live_data_summary,
+      live_data_freshness, live_data_enabled,
+      ticker_symbol, market_cap, current_price, pe_ratio
+
+  Phase 7B: MCP servers (mcp_server_base + per-API)
+  Phase 7C: DataShield full (freshness + MNPI guard)
+  Phase 7D: Pipeline integration N00.5
+
+AFTER PHASE 7: Streamlit UI → Phase 4 ML training
+
+## CONSTRAINTS
+C1:$0 C2:local C3:Llama3.1 8B
+C4:14GB(15.4 test) C5:seed=42
+C6:DPO beta=0.1 C7:context_first
+C8:metadata prefix C9:no _rlef_ C10:ollama pull
