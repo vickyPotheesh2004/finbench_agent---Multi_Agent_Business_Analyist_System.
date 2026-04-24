@@ -18,26 +18,23 @@ SEC filings (10-K, 10-Q, 8-K), earnings transcripts, and financial statements.
 Built to target top performance on the [FinanceBench](https://arxiv.org/abs/2311.11944)
 benchmark while running entirely on a single laptop with no paid APIs.
 
-**Why this exists:** financial document QA is dominated by expensive cloud LLMs
-that send sensitive filings over the network. This system proves a 90%+
-FinanceBench-class score is achievable with a single 4B-parameter local model,
-a disciplined retrieval cascade, and a multi-pod debate architecture.
+**Why this exists:** financial document QA is dominated by expensive cloud LLMs that send sensitive filings over the network. This project is a complete open-source framework — 19-node deterministic pipeline, 1287 tests, multi-pod debate architecture — designed to explore how much accuracy is achievable with a small local model. Benchmark numbers are measured honestly and published in `eval/results/latest.md` as they improve.
 
 ---
 
-## Key Results
+### Key Results
 
-| Metric | Target | Status |
-|---|---|---|
-| FinanceBench accuracy | ≥82% | Pending full eval |
-| BizBench accuracy | ≥74% | Pending full eval |
-| Inference cost | $0 | ✅ Enforced (C1) |
-| Local-only | 100% | ✅ Enforced (C2) |
-| Memory footprint | ≤14GB | ✅ Enforced (C4) |
-| Deterministic | seed=42 | ✅ Enforced (C5) |
-| Test coverage | — | ✅ 1287 passing |
+| Metric | Current | Target | Status |
+|---|---|---|---|
+| FinanceBench accuracy (zero-shot) | Measuring | 45–55% | 🔬 In progress |
+| FinanceBench accuracy (after SFT) | Measuring | 55–65% | 📅 Week 2 |
+| Inference cost | $0 | $0 | ✅ Enforced (C1) |
+| Local-only | 100% | 100% | ✅ Enforced (C2) |
+| Memory footprint | ≤14 GB target | ≤14 GB | ✅ Enforced (C4) |
+| Deterministic | seed=42 | seed=42 | ✅ Enforced (C5) |
+| Test coverage | 1287 passing | — | ✅ |
 
-Run `python run_eval.py --seed 42` to reproduce these numbers from scratch.
+**Latest eval:** see [`eval/results/latest.md`](eval/results/latest.md) for the most recent benchmark numbers, with detailed breakdowns by question type and ablations.
 
 ---
 
