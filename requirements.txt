@@ -1,0 +1,86 @@
+﻿# ============================================================================
+# FinBench Multi-Agent Business Analyst AI — Dependencies
+# PDR-BAAAI-001 · Rev 1.0
+# Python: 3.11.x
+#
+# Install:     pip install -r requirements.txt
+# Test:        pytest tests/ -q
+#
+# All dependencies are free and run 100% locally (C1 + C2 constraints).
+#
+# NOTE: Minimum-version style is used because the LangChain/LangGraph
+#       ecosystem churns every 2-3 months. Exact pinning causes breakage
+#       on fresh installs. For strict reproducibility use:
+#
+#           pip freeze > requirements-lock.txt
+#
+#       and commit both files.
+# ============================================================================
+
+# ─── CORE NUMERICAL STACK ─────────────────────────────────────────────────────
+numpy>=1.26,<3.0
+pandas>=2.2,<4.0
+scipy>=1.13,<2.0
+scikit-learn>=1.4,<2.0
+networkx>=3.3,<4.0
+
+# ─── LLM / AGENT FRAMEWORK ────────────────────────────────────────────────────
+langgraph>=0.2,<2.0
+langchain-core>=0.2,<3.0
+jinja2>=3.1,<4.0
+
+# ─── RETRIEVAL ────────────────────────────────────────────────────────────────
+bm25s>=0.1,<1.0
+sentence-transformers>=2.7,<6.0
+chromadb>=0.4,<2.0
+tiktoken>=0.7,<1.0
+
+# ─── DOCUMENT INGESTION ───────────────────────────────────────────────────────
+pdfplumber>=0.11,<1.0
+pymupdf>=1.24,<2.0
+python-docx>=1.1,<2.0
+openpyxl>=3.1,<4.0
+python-pptx>=0.6,<2.0
+beautifulsoup4>=4.12,<5.0
+lxml>=5.2,<7.0
+pdf2image>=1.17,<2.0
+
+# OCR + vision (optional — for N01b scanned pages + chart extraction)
+pytesseract>=0.3,<1.0
+Pillow>=10.3,<13.0
+
+# ─── EXPLAINABILITY ───────────────────────────────────────────────────────────
+shap>=0.45,<1.0
+xgboost>=2.0,<4.0
+
+# ─── FORENSICS (TriGuard) ─────────────────────────────────────────────────────
+arch>=6.3,<9.0
+
+# ─── OUTPUT GENERATION ────────────────────────────────────────────────────────
+reportlab>=4.1,<5.0
+matplotlib>=3.8,<4.0
+graphviz>=0.20,<1.0
+
+# ─── UI ───────────────────────────────────────────────────────────────────────
+streamlit>=1.34,<3.0
+
+# ─── REAL-TIME DATA FEEDS (Phase 7 — optional, C2-gated by env vars) ──────────
+yfinance>=0.2,<2.0
+fredapi>=0.5,<1.0
+
+# ─── TESTING + CI ─────────────────────────────────────────────────────────────
+pytest>=9.0
+pytest-cov>=7.0
+pytest-env>=1.6
+pytest-timeout>=2.4
+
+# ─── UTILITIES ────────────────────────────────────────────────────────────────
+tqdm>=4.66
+python-dotenv>=1.0
+pyyaml>=6.0
+
+# ============================================================================
+# EXCLUDED BY DESIGN:
+#   - openai, anthropic, cohere, google-generativeai   (violates C1)
+#   - watchdog                                          (we poll instead — C2)
+# ============================================================================
