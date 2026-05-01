@@ -7,21 +7,15 @@ Purpose:
     512-token word boundaries). Adds mandatory 5-field metadata prefix
     to every chunk (C8). Builds bm25s sparse index + ChromaDB collection.
 
-    Chunk prefix format (C8):
-        COMPANY / DOCTYPE / FISCAL_YEAR / SECTION / PAGE
-
-    Outputs:
-        state.chunk_count           — total chunks created
-        state.bm25_index_path       — path to saved bm25s index
-        state.chromadb_collection   — ChromaDB collection name
-
-Constraints satisfied:
-    C1  $0 cost — bm25s, ChromaDB are free
-    C2  100% local — zero network calls
-    C4  Memory-safe — chunk cap enforced
-    C5  seed=42
-    C8  5-field metadata prefix on EVERY chunk
-    C9  No _rlef_ fields in output
+CHANGELOG:
+  2026-04-30 S8  Bug #1.5: _chunk_by_paragraphs() was consolidating
+                 multiple short paragraphs into a single chunk if total
+                 text was small. This produced 1-chunk corpora that
+                 broke BM25 retrieval. NEW behaviour: emit one chunk
+                 per non-empty paragraph (above MIN_CHUNK_CHARS), only
+                 merging when a single paragraph exceeds max_chars.
+                 Also: DISABLE_CHROMADB env var honoured (Session 6 patch
+                 made permanent).
 """
 
 from __future__ import annotations
@@ -34,10 +28,10 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 SEED             = 42
-MAX_CHUNK_TOKENS = 800          # max tokens per chunk
-MIN_CHUNK_CHARS  = 50           # discard chunks shorter than this
-MAX_CHUNKS_CAP   = 5000         # C4: memory safety cap
-CHUNK_OVERLAP    = 100          # character overlap between chunks
+MAX_CHUNK_TOKENS = 800
+MIN_CHUNK_CHARS  = 50
+MAX_CHUNKS_CAP   = 5000
+CHUNK_OVERLAP    = 100
 
 
 class DocumentChunk:
@@ -68,14 +62,13 @@ class DocumentChunk:
         self.section       = section
         self.page          = page
         self.char_count    = len(text)
-        self.token_estimate= len(text) // 4  # rough estimate
+        self.token_estimate= len(text) // 4
 
         # C8: mandatory 5-field prefix
         self.prefix = f"{company} / {doc_type} / {fiscal_year} / {section} / {page}"
 
     @property
     def prefixed_text(self) -> str:
-        """Full text with C8 prefix prepended."""
         return f"{self.prefix}\n{self.text}"
 
     def to_dict(self) -> Dict:
@@ -94,16 +87,7 @@ class DocumentChunk:
 
 
 class Chunker:
-    """
-    N03 Chunker + Index Builder.
-
-    Splits at section boundaries first, then by paragraph, then by
-    sentence. Never splits at arbitrary 512-token word boundaries.
-
-    Two usage modes:
-        1. chunker.chunk(raw_text, section_tree, ...) → List[DocumentChunk]
-        2. chunker.run(ba_state)                      → BAState
-    """
+    """N03 Chunker + Index Builder."""
 
     def __init__(
         self,
@@ -120,14 +104,6 @@ class Chunker:
     # ── LangGraph pipeline node ───────────────────────────────────────────────
 
     def run(self, state) -> object:
-        """
-        LangGraph N03 node entry point.
-        Reads:  state.raw_text, state.section_tree,
-                state.company_name, state.doc_type, state.fiscal_year,
-                state.session_id
-        Writes: state.chunk_count, state.bm25_index_path,
-                state.chromadb_collection
-        """
         raw_text     = getattr(state, "raw_text",      "") or ""
         section_tree = getattr(state, "section_tree",  {}) or {}
         company      = getattr(state, "company_name",  "UNKNOWN") or "UNKNOWN"
@@ -139,7 +115,6 @@ class Chunker:
             logger.warning("N03: empty raw_text — skipping chunking")
             return state
 
-        # Build chunks
         chunks = self.chunk(
             raw_text     = raw_text,
             section_tree = section_tree,
@@ -148,10 +123,9 @@ class Chunker:
             fiscal_year  = fiscal_year,
         )
 
-        # Build indexes
         collection_name = f"doc-{session_id[:16]}"
         bm25_path       = os.path.join(self.bm25_dir, session_id[:16])
-        
+
         self._build_bm25_index(chunks, bm25_path)
         self._build_chromadb_index(chunks, collection_name)
 
@@ -175,44 +149,35 @@ class Chunker:
         doc_type:     str = "UNKNOWN",
         fiscal_year:  str = "UNKNOWN",
     ) -> List[DocumentChunk]:
-        """
-        Split document into chunks at section boundaries.
-
-        Strategy:
-            1. If section_tree has children → split at section boundaries
-            2. Fallback → split by paragraphs
-            3. Each section further split if > max_tokens
-
-        Args:
-            raw_text     : Full document text from N01
-            section_tree : Hierarchical section dict from N02
-            company      : Company name (C8)
-            doc_type     : Document type (C8)
-            fiscal_year  : Fiscal year (C8)
-
-        Returns:
-            List of DocumentChunk objects with C8 metadata prefix
-        """
-        sections = section_tree.get("children", [])
+        sections = section_tree.get("children", []) if section_tree else []
         chunks: List[DocumentChunk] = []
 
         if sections:
-            # Strategy 1: Section-boundary chunking
             chunks = self._chunk_by_sections(
                 raw_text, sections, company, doc_type, fiscal_year
             )
-        else:
-            # Strategy 2: Paragraph-based fallback
+
+        # If sections produced nothing, OR no sections at all,
+        # fall back to paragraph chunking
+        if not chunks:
             chunks = self._chunk_by_paragraphs(
                 raw_text, company, doc_type, fiscal_year
             )
 
-        # Apply memory cap (C4)
+        # Last-ditch: if still nothing (text too short), emit single chunk
+        if not chunks and raw_text.strip():
+            chunks = [DocumentChunk(
+                chunk_id    = "chunk_0000",
+                text        = raw_text.strip(),
+                company     = company,
+                doc_type    = doc_type,
+                fiscal_year = fiscal_year,
+                section     = "DOCUMENT",
+                page        = 0,
+            )]
+
         chunks = chunks[:MAX_CHUNKS_CAP]
-
-        # Validate all chunks have 5-field prefix (C8)
         self._assert_metadata_prefixes(chunks)
-
         return chunks
 
     # ── Private chunking strategies ───────────────────────────────────────────
@@ -232,15 +197,12 @@ class Chunker:
         for section in sections:
             section_name = section.get("name",       "UNKNOWN")
             start_page   = section.get("start_page", 0)
-            end_page     = section.get("end_page",   start_page)
 
-            # Extract section text by finding it in raw_text
             section_text = self._extract_section_text(
                 raw_text, section_name, start_page
             )
 
             if not section_text or len(section_text) < MIN_CHUNK_CHARS:
-                # Try children sections
                 for child in section.get("children", []):
                     child_text = self._extract_section_text(
                         raw_text, child.get("name", ""), child.get("start_page", 0)
@@ -257,7 +219,6 @@ class Chunker:
                         chunk_id += len(sub_chunks)
                 continue
 
-            # Split section if too large
             sub_chunks = self._split_large_text(
                 section_text,
                 company, doc_type, fiscal_year,
@@ -266,7 +227,6 @@ class Chunker:
             chunks.extend(sub_chunks)
             chunk_id += len(sub_chunks)
 
-            # Process child sections
             for child in section.get("children", []):
                 child_text = self._extract_section_text(
                     raw_text, child.get("name", ""), child.get("start_page", 0)
@@ -282,12 +242,6 @@ class Chunker:
                     chunks.extend(child_chunks)
                     chunk_id += len(child_chunks)
 
-        # If no chunks from sections, fall back to paragraph chunking
-        if not chunks:
-            chunks = self._chunk_by_paragraphs(
-                raw_text, company, doc_type, fiscal_year
-            )
-
         return chunks
 
     def _chunk_by_paragraphs(
@@ -297,46 +251,48 @@ class Chunker:
         doc_type:    str,
         fiscal_year: str,
     ) -> List[DocumentChunk]:
-        """Fallback: split by double-newline paragraphs."""
+        """Bug #1.5 fix: emit ONE chunk per non-empty paragraph.
+        Only split a single paragraph further if it exceeds max_chars.
+        Never consolidate multiple paragraphs into one chunk.
+        """
+        max_chars  = self.max_tokens * 4
         paragraphs = re.split(r'\n\s*\n', raw_text)
-        chunks     = []
-        chunk_id   = 0
+        chunks: List[DocumentChunk] = []
+        chunk_id = 0
 
-        current_text = ""
+        # Detect rough section header from first non-empty paragraph
+        # (a 1-3 word line is likely a section header)
+        current_section = "DOCUMENT"
+
         for para in paragraphs:
             para = para.strip()
             if not para or len(para) < MIN_CHUNK_CHARS:
+                # Possibly a section header — capture if 1-5 words
+                wc = len(para.split())
+                if 1 <= wc <= 5 and len(para) <= 60:
+                    current_section = para[:50]
                 continue
 
-            if len(current_text) + len(para) > self.max_tokens * 4:
-                if current_text:
-                    chunks.append(DocumentChunk(
-                        chunk_id    = f"chunk_{chunk_id:04d}",
-                        text        = current_text.strip(),
-                        company     = company,
-                        doc_type    = doc_type,
-                        fiscal_year = fiscal_year,
-                        section     = "DOCUMENT",
-                        page        = 0,
-                    ))
-                    chunk_id    += 1
-                    current_text = para
-                else:
-                    current_text = para
+            # Long paragraph: split into multiple chunks
+            if len(para) > max_chars:
+                sub_chunks = self._split_large_text(
+                    para,
+                    company, doc_type, fiscal_year,
+                    current_section, 0, chunk_id,
+                )
+                chunks.extend(sub_chunks)
+                chunk_id += len(sub_chunks)
             else:
-                current_text = (current_text + "\n\n" + para).strip()
-
-        # Last chunk
-        if current_text and len(current_text) >= MIN_CHUNK_CHARS:
-            chunks.append(DocumentChunk(
-                chunk_id    = f"chunk_{chunk_id:04d}",
-                text        = current_text.strip(),
-                company     = company,
-                doc_type    = doc_type,
-                fiscal_year = fiscal_year,
-                section     = "DOCUMENT",
-                page        = 0,
-            ))
+                chunks.append(DocumentChunk(
+                    chunk_id    = f"chunk_{chunk_id:04d}",
+                    text        = para,
+                    company     = company,
+                    doc_type    = doc_type,
+                    fiscal_year = fiscal_year,
+                    section     = current_section,
+                    page        = 0,
+                ))
+                chunk_id += 1
 
         return chunks
 
@@ -367,7 +323,6 @@ class Chunker:
                 ))
             return chunks
 
-        # Split by sentences for large blocks
         sentences = re.split(r'(?<=[.!?])\s+', text)
         current   = ""
         idx       = 0
@@ -385,7 +340,6 @@ class Chunker:
                         page        = page,
                     ))
                     idx += 1
-                # Overlap: keep last 100 chars
                 current = current[-CHUNK_OVERLAP:] + " " + sent
             else:
                 current = (current + " " + sent).strip()
@@ -407,14 +361,9 @@ class Chunker:
     def _extract_section_text(
         raw_text: str, section_name: str, page: int
     ) -> str:
-        """
-        Extract text for a specific section by finding the section heading
-        in the raw text and taking the text until the next heading.
-        """
         if not section_name or not raw_text:
             return ""
 
-        # Find section start
         pattern = re.compile(
             re.escape(section_name[:30]),
             re.IGNORECASE,
@@ -424,16 +373,11 @@ class Chunker:
             return ""
 
         start = m.start()
-        # Take next 3000 chars as section content
         end   = min(start + 3000, len(raw_text))
         return raw_text[start:end].strip()
 
     @staticmethod
     def _assert_metadata_prefixes(chunks: List[DocumentChunk]) -> None:
-        """
-        C8: Assert every chunk has all 5 metadata fields.
-        Raises ValueError if any chunk is missing a field.
-        """
         for chunk in chunks:
             if not all([
                 chunk.company,
@@ -448,8 +392,8 @@ class Chunker:
                     f"fiscal_year={chunk.fiscal_year!r} section={chunk.section!r} "
                     f"page={chunk.page!r}"
                 )
-            
-            # ── Index builders ────────────────────────────────────────────────────────
+
+    # ── Index builders ────────────────────────────────────────────────────────
 
     def _build_bm25_index(
         self, chunks: List[DocumentChunk], index_path: str
@@ -465,7 +409,6 @@ class Chunker:
             retriever = bm25s.BM25(corpus=tokenised)
             retriever.index(tokenised)
             retriever.save(index_path)
-            # Write chunks_meta.json — required by N07 BM25Retriever
             import json as _json
             meta_path = os.path.join(index_path, "chunks_meta.json")
             with open(meta_path, "w", encoding="utf-8") as _f:
@@ -479,7 +422,15 @@ class Chunker:
     def _build_chromadb_index(
         self, chunks: List[DocumentChunk], collection_name: str
     ) -> None:
-        """Build ChromaDB vector collection from chunks."""
+        """Build ChromaDB vector collection from chunks.
+
+        Honours DISABLE_CHROMADB=1 env var (Session 6 patch).
+        """
+        if os.environ.get("DISABLE_CHROMADB"):
+            logger.info(
+                "ChromaDB index build disabled by DISABLE_CHROMADB env var"
+            )
+            return
         if not chunks:
             return
         try:
@@ -487,8 +438,6 @@ class Chunker:
             from chromadb.utils import embedding_functions
             os.makedirs(self.chromadb_dir, exist_ok=True)
             client = chromadb.PersistentClient(path=self.chromadb_dir)
-            # Use BGE-M3 (1024-dim) to match N08 BGE retriever dimensions.
-            # Without this, Chroma defaults to 384-dim and N08 queries crash.
             bge_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name="BAAI/bge-m3",
             )
@@ -533,4 +482,3 @@ def run_chunker(
 ) -> object:
     """Convenience wrapper for LangGraph N03 node."""
     return Chunker(bm25_dir=bm25_dir, chromadb_dir=chromadb_dir).run(state)
-    
