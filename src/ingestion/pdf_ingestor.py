@@ -3,6 +3,13 @@ N01 PDF Ingestor - Multi-Format Document Ingestion
 PDR-BAAAI-001 Rev 1.0 Node N01
 
 Wires N01b ImageProcessor (opt-in) for OCR + chart vision extraction.
+
+CHANGELOG:
+  2026-04-30 S9  Bug #2: rewrote _ingest_html() to extract headings and
+                 table cells properly. Was: soup.get_text() only, returning
+                 0 headings + 0 table_cells. Now: parses <h1>-<h6>, <table>,
+                 <th>/<td>, <b>/<strong>, with page-offset estimation.
+                 This is the highest-impact fix in the campaign.
 """
 
 from __future__ import annotations
@@ -23,6 +30,9 @@ SUPPORTED_EXTENSIONS = {
 }
 
 HEADING_FONT_SIZE_MIN = 13.0
+
+# Approx chars per visual page in a SEC 10-K HTML — used for page estimation
+HTML_CHARS_PER_PAGE = 3000
 
 SEC_SECTIONS = [
     "business", "risk factors", "properties",
@@ -86,12 +96,6 @@ class PDFIngestor:
         enable_images: bool = False,
         llm_client          = None,
     ) -> None:
-        """
-        Args:
-            enable_images : If True, runs N01b ImageProcessor after text extraction.
-                            Extracts OCR from scanned pages + chart data via vision.
-            llm_client    : Optional Gemma4 client for chart vision analysis.
-        """
         self.enable_images = enable_images
         self._llm          = llm_client
 
@@ -418,29 +422,251 @@ class PDFIngestor:
             "company_name": "", "doc_type": "", "fiscal_year": "",
         }
 
+    # ════════════════════════════════════════════════════════════════════════
+    # HTML INGESTION  ── BUG #2 FIX LIVES HERE ──
+    # ════════════════════════════════════════════════════════════════════════
+
     def _ingest_html(self, file_path: str) -> Dict:
-        raw_text = ""
+        """Bug #2 fix: full HTML extraction.
+
+        Old behaviour: soup.get_text() only → 0 headings, 0 tables.
+        New behaviour: extracts <h1>-<h6>, <table>/<th>/<td>, <b>/<strong>,
+                       and estimates page numbers from byte offset.
+        """
+        raw_text          = ""
+        table_cells       = []
+        heading_positions = []
 
         try:
+            # Suppress XML-as-HTML warning (SEC files are valid for our purpose)
+            import warnings
+            try:
+                from bs4 import XMLParsedAsHTMLWarning
+                warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+            except ImportError:
+                pass
+
             from bs4 import BeautifulSoup
+
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                soup     = BeautifulSoup(f.read(), "lxml")
+                content = f.read()
+
+            # Try lxml first, fall back to html.parser
+            try:
+                soup = BeautifulSoup(content, "lxml")
+            except Exception:
+                soup = BeautifulSoup(content, "html.parser")
+
+            # ── Step 1: extract clean text ────────────────────────────────
+            # Remove script and style first so they don't leak into raw_text
+            for tag in soup(["script", "style", "noscript", "meta", "link"]):
+                tag.decompose()
+
             raw_text = soup.get_text(separator="\n")
+            # Collapse 3+ newlines to 2 (preserve paragraph breaks)
+            raw_text = re.sub(r"\n{3,}", "\n\n", raw_text)
+            # Collapse multiple spaces but keep newlines
+            raw_text = re.sub(r"[ \t]+", " ", raw_text)
+
+            # ── Step 2: extract headings <h1>-<h6> ────────────────────────
+            heading_positions.extend(
+                self._html_extract_headings(soup, raw_text)
+            )
+
+            # ── Step 3: extract bold-as-heading <b>, <strong> ────────────
+            heading_positions.extend(
+                self._html_extract_bold_headings(soup, raw_text)
+            )
+
+            # ── Step 4: extract table cells ───────────────────────────────
+            table_cells.extend(
+                self._html_extract_table_cells(soup, raw_text)
+            )
+
+            # ── Step 5: dedupe headings (some 10-Ks repeat) ───────────────
+            heading_positions = self._dedupe_headings(heading_positions)
+
+            logger.debug(
+                "HTML extracted: %d chars, %d headings, %d table cells",
+                len(raw_text), len(heading_positions), len(table_cells),
+            )
+
         except ImportError:
+            # bs4 missing — fall back to crude regex strip
+            logger.warning("BeautifulSoup not installed — using regex fallback")
             try:
                 with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                     raw_text = f.read()
-                raw_text = re.sub(r'<[^>]+>', ' ', raw_text)
+                raw_text = re.sub(r"<script[^>]*>.*?</script>", " ",
+                                  raw_text, flags=re.DOTALL | re.IGNORECASE)
+                raw_text = re.sub(r"<style[^>]*>.*?</style>", " ",
+                                  raw_text, flags=re.DOTALL | re.IGNORECASE)
+                raw_text = re.sub(r"<[^>]+>", " ", raw_text)
+                raw_text = re.sub(r"\s+", " ", raw_text)
             except Exception as exc:
-                logger.warning("HTML fallback error: %s", exc)
+                logger.warning("HTML regex fallback error: %s", exc)
         except Exception as exc:
             logger.warning("HTML error: %s", exc)
 
+        company_name, doc_type, fiscal_year = self._extract_metadata(
+            raw_text, heading_positions
+        )
+
         return {
-            "raw_text": raw_text, "table_cells": [],
-            "heading_positions": [],
-            "company_name": "", "doc_type": "", "fiscal_year": "",
+            "raw_text":          raw_text,
+            "table_cells":       table_cells,
+            "heading_positions": heading_positions,
+            "company_name":      company_name,
+            "doc_type":          doc_type,
+            "fiscal_year":       fiscal_year,
         }
+
+    @staticmethod
+    def _estimate_page_from_offset(offset: int) -> int:
+        """Estimate visual page number from byte offset in HTML text."""
+        if offset <= 0:
+            return 1
+        return max(1, (offset // HTML_CHARS_PER_PAGE) + 1)
+
+    def _html_extract_headings(self, soup, raw_text: str) -> List[Dict]:
+        """Extract <h1>-<h6> elements as heading_positions."""
+        out = []
+        # font_size by level: h1=20, h2=18, h3=16, h4=14, h5=13, h6=13
+        size_by_level = {1: 20.0, 2: 18.0, 3: 16.0, 4: 14.0, 5: 13.0, 6: 13.0}
+
+        for level in range(1, 7):
+            for tag in soup.find_all(f"h{level}"):
+                text = tag.get_text(separator=" ", strip=True)
+                if not text or len(text) < 3 or len(text) > 200:
+                    continue
+
+                # Estimate page by finding text in raw_text
+                page = 1
+                snippet = text[:30]
+                idx = raw_text.find(snippet)
+                if idx >= 0:
+                    page = self._estimate_page_from_offset(idx)
+
+                out.append({
+                    "text":      text,
+                    "font_size": size_by_level[level],
+                    "is_bold":   True,
+                    "page":      page,
+                })
+        return out
+
+    def _html_extract_bold_headings(self, soup, raw_text: str) -> List[Dict]:
+        """Extract <b>/<strong> short text as candidate headings.
+
+        SEC 10-Ks often use bold text as section markers without <hN> tags.
+        We treat <b>/<strong> with 3-100 chars and 1-12 words as heading-like.
+        """
+        out = []
+        for tag in soup.find_all(["b", "strong"]):
+            text = tag.get_text(separator=" ", strip=True)
+            if not text:
+                continue
+            wc = len(text.split())
+            # Reject sentences (likely mid-paragraph emphasis)
+            if len(text) < 3 or len(text) > 120 or wc > 12:
+                continue
+            # Reject pure numbers / page refs
+            if re.match(r"^[\d\s,.\-$()]+$", text):
+                continue
+
+            page = 1
+            snippet = text[:30]
+            idx = raw_text.find(snippet)
+            if idx >= 0:
+                page = self._estimate_page_from_offset(idx)
+
+            out.append({
+                "text":      text,
+                "font_size": 13.5,    # H2-borderline
+                "is_bold":   True,
+                "page":      page,
+            })
+        return out
+
+    def _html_extract_table_cells(self, soup, raw_text: str) -> List[Dict]:
+        """Extract every <td>/<th> cell with row+column headers from <table>."""
+        cells: List[Dict] = []
+
+        for t_num, table in enumerate(soup.find_all("table"), start=1):
+            rows = table.find_all("tr")
+            if len(rows) < 2:
+                continue
+
+            # Estimate page from table position
+            page = 1
+            first_row_text = (
+                rows[0].get_text(" ", strip=True) if rows else ""
+            )
+            if first_row_text:
+                idx = raw_text.find(first_row_text[:50])
+                if idx >= 0:
+                    page = self._estimate_page_from_offset(idx)
+
+            # Detect header row (uses <th>, OR first row with all bold cells,
+            # OR just take row 0 as header)
+            header_row = None
+            for r in rows:
+                ths = r.find_all("th")
+                if ths:
+                    header_row = r
+                    break
+            if header_row is None:
+                header_row = rows[0]
+
+            col_headers = [
+                c.get_text(" ", strip=True)
+                for c in header_row.find_all(["th", "td"])
+            ]
+
+            # Determine data rows
+            try:
+                start_idx = rows.index(header_row) + 1
+            except ValueError:
+                start_idx = 1
+            data_rows = rows[start_idx:]
+
+            for row in data_rows:
+                row_cells = row.find_all(["th", "td"])
+                if not row_cells:
+                    continue
+
+                row_header = row_cells[0].get_text(" ", strip=True)
+                for col_idx, c in enumerate(row_cells[1:], start=1):
+                    value = c.get_text(" ", strip=True)
+                    # Skip empty cells, skip pure punctuation noise
+                    if not value or value in ("—", "-", "$", "(", ")"):
+                        continue
+                    col_header = (
+                        col_headers[col_idx]
+                        if col_idx < len(col_headers) else ""
+                    )
+                    cells.append(TableCell(
+                        row_header   = row_header,
+                        col_header   = col_header,
+                        value        = value,
+                        page         = page,
+                        table_number = t_num,
+                    ).to_dict())
+
+        return cells
+
+    @staticmethod
+    def _dedupe_headings(headings: List[Dict]) -> List[Dict]:
+        """Deduplicate by text (case-insensitive). Keep first occurrence."""
+        seen = set()
+        out  = []
+        for h in headings:
+            key = (h.get("text", "") or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(h)
+        return out
 
     def _ingest_txt(self, file_path: str) -> Dict:
         raw_text = ""
