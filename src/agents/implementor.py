@@ -50,7 +50,7 @@ SeedManager.set_all()
 # ── Ollama config ─────────────────────────────────────────────────────────────
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
-TIMEOUT_SEC  = 120
+TIMEOUT_SEC  = 60
 
 # ── Confidence decay per retry ────────────────────────────────────────────────
 CONFIDENCE_DECAY = {0: 1.0, 1: 0.95, 2: 0.85, 3: 0.70, 4: 0.60}

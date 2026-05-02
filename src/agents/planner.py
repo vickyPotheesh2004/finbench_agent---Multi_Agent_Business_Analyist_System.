@@ -47,7 +47,7 @@ SeedManager.set_all()
 # ── Ollama config ─────────────────────────────────────────────────────────────
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
-TIMEOUT_SEC  = 120
+TIMEOUT_SEC  = 60
 
 # ── Planner prompt ────────────────────────────────────────────────────────────
 PLANNER_EMOTION_PREFIX = """You are the StrategicPlanner for a financial analyst team.
@@ -284,3 +284,55 @@ if __name__ == "__main__":
     assert isinstance(result.curiosity_answers, dict)
 
     rprint(f"\n[bold green]All checks passed. StrategicPlanner ready.[/bold green]\n")
+
+# ════════════════════════════════════════════════════════════════════════════
+# BUG #5 — Fast-fail when Ollama is unavailable
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestBug5FastFail:
+    """Regression for Bug #5: Ollama timeout cascade.
+
+    Before fix: dead Ollama -> 120s timeout per LLM call x 3 calls x 3 retries
+                = 18 minutes wasted per question.
+    After fix:  is_available() probes once, caches result, fast-fails
+                subsequent calls in <0.1s.
+    """
+
+    def test_ollama_client_default_timeout_is_60(self):
+        """Bug #5: default timeout reduced from 120s to 60s."""
+        client = OllamaClient()
+        assert client.timeout == 60, (
+            f"Bug #5 regression: timeout is {client.timeout}, "
+            f"expected 60 (was 120 before fix)"
+        )
+
+    def test_unavailable_client_returns_empty_quickly(self):
+        """Bug #5: is_available()=False must fast-fail chat()."""
+        import time
+        # Use a port that's guaranteed not to have Ollama
+        client = OllamaClient(base_url="http://127.0.0.1:1")
+        client.is_available()  # prime cache to False
+        t0 = time.time()
+        result = client.chat("test prompt")
+        elapsed = time.time() - t0
+        assert result == ""
+        assert elapsed < 5.0, (
+            f"Bug #5: dead-Ollama chat took {elapsed:.2f}s "
+            f"(must be <5s; previously was 120s)"
+        )
+
+    def test_availability_cache_avoids_repeat_probes(self):
+        """Bug #5: is_available() must cache result for TTL window."""
+        client = OllamaClient(base_url="http://127.0.0.1:1")
+        # First call probes
+        result1 = client.is_available()
+        # Second call must use cache (instant)
+        import time
+        t0 = time.time()
+        result2 = client.is_available()
+        elapsed = time.time() - t0
+        assert result1 == result2
+        assert elapsed < 0.1, (
+            f"Bug #5: cached is_available() took {elapsed:.3f}s "
+            f"(must be <0.1s — cache not working)"
+        )

@@ -100,13 +100,22 @@ class OllamaClient:
     Thin wrapper around Ollama HTTP API.
     C2: always calls localhost:11434 — never external.
     Falls back to llama3.1:8b if financebench-expert-v1 not found.
+
+    Bug #5 fix (S15): timeout reduced 120s -> 60s, with cached
+    availability check so dead Ollama returns instantly instead
+    of blocking 60s on every call.
     """
+
+    # Class-level cache: shared across instances
+    _availability_cache: Optional[bool] = None
+    _availability_checked_at: float     = 0.0
+    _AVAILABILITY_TTL_SEC               = 30.0
 
     def __init__(
         self,
         model:    str = OLLAMA_MODEL,
         base_url: str = OLLAMA_BASE_URL,
-        timeout:  int = 120,
+        timeout:  int = 60,           # was 120 — Bug #5
     ) -> None:
         self.model    = model
         self.base_url = base_url
@@ -116,13 +125,13 @@ class OllamaClient:
         """
         Send prompt to Ollama and return response text.
 
-        Args:
-            prompt      : Complete prompt string (context-first, C7)
-            temperature : Sampling temperature (low for financial precision)
-
-        Returns:
-            Response text string, or error message if call fails
+        Bug #5: fast-fail if Ollama known unavailable.
         """
+        # Fast-fail check — avoid 60s timeout when Ollama is dead
+        if not self.is_available():
+            logger.warning("Ollama unavailable — fast-fail returning empty")
+            return ""
+
         try:
             import requests
             response = requests.post(
@@ -151,18 +160,38 @@ class OllamaClient:
                              response.status_code, response.text[:200])
                 return ""
         except Exception as exc:
+            # On error, invalidate cache so next call re-checks
+            type(self)._availability_cache = None
             logger.error("Ollama call failed: %s", exc)
             return ""
 
     def is_available(self) -> bool:
-        """Check if Ollama server is running."""
+        """
+        Check if Ollama server is running.
+
+        Bug #5: cache result for 30s. First call probes; subsequent
+        calls within TTL reuse the cached result. Avoids hammering
+        the health endpoint on every LLM call.
+        """
+        import time
+        now = time.time()
+        cls = type(self)
+
+        # Use cached result if still fresh
+        if cls._availability_cache is not None:
+            if (now - cls._availability_checked_at) < cls._AVAILABILITY_TTL_SEC:
+                return cls._availability_cache
+
+        # Probe with short timeout — dead host should fail in seconds
         try:
             import requests
-            r = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            return r.status_code == 200
+            r = requests.get(f"{self.base_url}/api/tags", timeout=3)
+            cls._availability_cache       = (r.status_code == 200)
         except Exception:
-            return False
+            cls._availability_cache       = False
 
+        cls._availability_checked_at = now
+        return cls._availability_cache
 
 # ── Strategic Planner ─────────────────────────────────────────────────────────
 

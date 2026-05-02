@@ -53,7 +53,7 @@ SeedManager.set_all()
 # ── Ollama config ─────────────────────────────────────────────────────────────
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
-TIMEOUT_SEC  = 120
+TIMEOUT_SEC  = 60
 
 # ── Validator results ─────────────────────────────────────────────────────────
 VALIDATOR_PASS   = "VALIDATOR_PASS"
