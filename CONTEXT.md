@@ -204,3 +204,31 @@ Gate M3: MRR@10 >= 0.85 required before deploy
 - This unlocks SniperRAG (N06) which had no table_cells to search
 - Test totals: ~1305 + 25 = ~1330 passing
 - Next: Bug #3 — ChromaDB collection name mismatch between chunker and N08
+
+
+
+
+## SESSION_16  ·  2026-05-03  ·  First Smoke Test — Baseline 0/5
+- Smoke test ran 5 numerical questions on Apple FY2023 10-K
+- Pipeline: structurally sound, runs end-to-end through all 19 nodes
+- Ingestion: 30 chunks, 2706 table_cells, FY2023 ✓ Apple Inc ✓
+- Per-question avg: 749s (12 min on laptop, slow but no hangs)
+- Total run: 62 min for 5 questions
+
+REAL BUGS DISCOVERED:
+  Bug A (CRITICAL): state.sniper_result type mismatch in BAState
+                    SniperRAG writes SniperResult object,
+                    state declares str → Pydantic rejects → hit dropped
+                    Pattern detection works (revenue, net_income, eps_diluted,
+                    gross_profit, total_assets all detected at 0.93 conf)
+                    Fix is 1 line. Expected impact: 0/5 → 3-4/5
+  Bug B: N09 reranker picks "UNITED STATES" cover page over financials
+         (chunks too coarse — 30 chunks for 219K-char doc)
+  Bug C: BGE-M3 embeds 30 chunks at ingest = 5.5 min
+         DISABLE_BGE not respected by chunker.build_collection path
+
+NEXT SESSION:
+  - Fix Bug A only (1 line in ba_state.py)
+  - Re-run smoke test
+  - Real accuracy number
+  - Then plan Bugs B, C, fine-tuning
