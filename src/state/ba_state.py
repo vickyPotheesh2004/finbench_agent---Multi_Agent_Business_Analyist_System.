@@ -85,7 +85,12 @@ class BAState(BaseModel):
 
     # ── RETRIEVAL (N06-N09) ───────────────────────────────────────────────
     sniper_hit:        bool       = False
-    sniper_result:     Optional[str] = None
+    sniper_result:     Optional[str] = None     # Human-readable answer string
+    sniper_answer:     str        = ""           # Always-set string version
+    sniper_value:      str        = ""           # Raw value for downstream
+    sniper_unit:       str        = ""
+    sniper_citation:   str        = ""
+    sniper_pattern:    str        = ""
     sniper_confidence: float      = 0.0
     bm25_results:      List[Dict] = Field(default_factory=list)
     bm25_confidence:   float      = 0.0

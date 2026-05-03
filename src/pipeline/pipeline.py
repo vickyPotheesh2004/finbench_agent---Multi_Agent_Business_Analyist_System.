@@ -85,23 +85,37 @@ except ImportError:
 # ─── Retrieval wrappers (some nodes have unique signatures) ───────────────────
 
 def _run_sniper_node(state) -> object:
-    """Adapter: run_sniper takes (query, table_cells) not (state)."""
+    """Adapter: run_sniper takes (query, table_cells) not (state).
+
+    Bug A fix (S17): unpack SniperResult dataclass into individual
+    BAState fields. Previously wrote the whole object into a str field
+    causing Pydantic validation error and silently dropping all hits.
+    """
     query = getattr(state, "query",       "") or ""
     cells = getattr(state, "table_cells", []) or []
     if not query or not cells:
         state.sniper_hit        = False
         state.sniper_confidence = 0.0
+        state.sniper_answer     = ""
         return state
 
     try:
         result: SniperResult = run_sniper(query, cells)
-        state.sniper_result     = result
-        state.sniper_hit        = bool(getattr(result, "hit",        False))
-        state.sniper_confidence = float(getattr(result, "confidence", 0.0))
+        # Unpack into individual string/float/bool fields
+        state.sniper_hit        = bool(result.sniper_hit)
+        state.sniper_confidence = float(result.confidence)
+        state.sniper_answer     = str(result.answer  or "")
+        state.sniper_value      = str(result.value   or "")
+        state.sniper_unit       = str(result.unit    or "")
+        state.sniper_citation   = str(result.citation or "")
+        state.sniper_pattern    = str(result.matched_pattern or "")
+        # sniper_result stays as a human-readable answer string (or None)
+        state.sniper_result     = result.answer if result.sniper_hit else None
     except Exception as exc:
         logger.warning("[N06] SniperRAG failed: %s", exc)
         state.sniper_hit        = False
         state.sniper_confidence = 0.0
+        state.sniper_answer     = ""
     return state
 
 

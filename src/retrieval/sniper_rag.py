@@ -1,6 +1,10 @@
 """
 N06 SniperRAG — Tier 1 Direct Table Cell Extraction
 PDR-BAAAI-001 · Rev 1.0 · Node N06
+
+CHANGELOG:
+  2026-05-03 S17  Bug A3: index iXBRL row_headers (us-gaap:NetIncomeLoss)
+                  by humanized name + alias map so existing patterns hit.
 """
 
 from __future__ import annotations
@@ -69,28 +73,31 @@ RAW_PATTERNS: Dict[str, str] = {
     "shareholders_equity": r"(?:total\s+)?(?:stockholders?|shareholders?)\s+(?:equity|deficit)",
     "cash":                r"cash\s+(?:and\s+(?:cash\s+)?equivalents?)?|cash\s+and\s+short.?term\s+investments?",
     "long_term_debt":      r"long.?term\s+(?:debt|notes?\s+payable|borrowings?|obligations?)",
-    "goodwill":            r"goodwill(?:\s+(?:and\s+)?(?:impairment|intangible))?",
-    "deferred_revenue":    r"deferred\s+(?:revenue|income)",
-    "accounts_receivable": r"(?:net\s+)?(?:accounts?\s+receivable|trade\s+receivables?)",
+    "goodwill":            r"goodwill(?:\s+impairment)?",
+    "deferred_revenue":    r"deferred\s+revenue(?:s)?|unearned\s+revenue",
+    "accounts_receivable": r"(?:net\s+)?accounts?\s+receivable|trade\s+receivables?",
     "inventory":           r"(?:total\s+)?inventor(?:y|ies)",
-    "current_assets":      r"total\s+current\s+assets",
-    "current_liabilities": r"total\s+current\s+liabilities",
-    "operating_cash_flow": r"(?:net\s+)?cash\s+(?:provided\s+by|from|generated\s+(?:by|from))\s+operating\s+activities",
-    "capex":               r"(?:purchases?\s+of\s+)?(?:property[,\s]+plant(?:\s+and\s+equipment)?|capital\s+expenditures?|capex|pp\s*&?\s*e)",
+    "current_assets":      r"(?:total\s+)?current\s+assets",
+    "current_liabilities": r"(?:total\s+)?current\s+liabilities",
+    "operating_cash_flow": r"(?:net\s+)?cash\s+(?:provided\s+by\s+|from\s+)?operating\s+activities|operating\s+cash\s+flow",
+    "capex":               r"capital\s+expenditures?|capex|purchases?\s+of\s+property",
     "free_cash_flow":      r"free\s+cash\s+flow|fcf",
-    "dividends_paid":      r"(?:cash\s+)?dividends?\s+(?:paid|declared)(?:\s+(?:per\s+)?(?:common\s+)?share)?",
-    "share_repurchase":    r"(?:repurchases?\s+of|buybacks?\s+of)?\s*(?:common\s+)?(?:stock|shares?)\s*(?:repurchases?|buybacks?)?",
+    "dividends_paid":      r"dividends?\s+paid|cash\s+dividends?",
+    "share_repurchase":    r"(?:repurchases?|buybacks?)\s+(?:of\s+)?(?:common\s+)?(?:stock|shares?)|treasury\s+stock\s+purchases?",
 }
 
 COMPILED_PATTERNS: Dict[str, re.Pattern] = {
-    name: re.compile(pattern, re.IGNORECASE)
-    for name, pattern in RAW_PATTERNS.items()
+    name: re.compile(pat, re.IGNORECASE)
+    for name, pat in RAW_PATTERNS.items()
 }
 
-_FY_PATTERNS: List[re.Pattern] = [
-    re.compile(r"\bfy\s*(\d{2,4})\b", re.IGNORECASE),
-    re.compile(r"\b(20\d{2})\b"),
-    re.compile(r"\bfiscal\s+(?:year\s+)?(\d{2,4})\b", re.IGNORECASE),
+
+_FY_PATTERNS = [
+    re.compile(r"\bfy\s*(\d{4})\b",                 re.IGNORECASE),
+    re.compile(r"\bfiscal\s+year\s+(\d{4})\b",      re.IGNORECASE),
+    re.compile(r"\b(?:in|for)\s+(\d{4})\b",         re.IGNORECASE),
+    re.compile(r"\b(\d{4})\b"),
+    re.compile(r"\bfy\s*'?(\d{2,4})\b",             re.IGNORECASE),
 ]
 
 _UNIT_PATTERNS: Dict[str, re.Pattern] = {
@@ -100,7 +107,6 @@ _UNIT_PATTERNS: Dict[str, re.Pattern] = {
     "%":         re.compile(r"\bpercent(?:age)?\b|%"),
 }
 
-# Confidence thresholds — PDR Section 7.2
 _CONF_EXACT      = 0.98
 _CONF_PREFIX     = 0.92
 _CONF_CONTAINS   = 0.85
@@ -153,6 +159,57 @@ def _detect_unit_from_context(text: str) -> str:
     return "units"
 
 
+# ── Bug A3 (S17): iXBRL semantic-name to human-readable conversion ──────────
+
+def _humanize_ixbrl(name: str) -> str:
+    """Convert 'us-gaap:NetIncomeLoss' -> 'net income loss'.
+
+    Strips namespace prefix (us-gaap:, dei:, etc.) and converts CamelCase
+    to lowercase space-separated words.
+    """
+    if not name:
+        return ""
+    if ":" in name:
+        name = name.split(":", 1)[1]
+    spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", name)
+    return spaced.lower().strip()
+
+
+_IXBRL_ALIAS_MAP: Dict[str, List[str]] = {
+    "net income loss":       ["net income", "net loss", "net earnings"],
+    "revenues":              ["revenue", "net sales", "total revenue"],
+    "revenue from contract with customer excluding assessed tax":
+                             ["revenue", "net sales", "total revenue"],
+    "earnings per share diluted": ["diluted eps", "diluted earnings per share"],
+    "earnings per share basic":   ["basic eps", "basic earnings per share"],
+    "gross profit":          ["gross margin", "gross profit"],
+    "operating income loss": ["operating income", "operating loss"],
+    "assets":                ["total assets"],
+    "liabilities":           ["total liabilities"],
+    "stockholders equity":   ["shareholders equity", "total equity"],
+    "stockholders equity including portion attributable to noncontrolling interest":
+                             ["shareholders equity", "total equity"],
+    "cash and cash equivalents at carrying value":
+                             ["cash", "cash and cash equivalents"],
+    "long term debt":        ["long-term debt", "long term debt"],
+    "research and development expense":
+                             ["research and development", "r and d"],
+    "selling general and administrative expense":
+                             ["sg and a", "selling general administrative"],
+    "cost of revenue":       ["cost of sales", "cost of goods sold"],
+    "cost of goods and services sold":
+                             ["cost of sales", "cost of goods sold"],
+    "income tax expense benefit":
+                             ["income tax", "tax expense"],
+    "interest expense":      ["interest expense"],
+}
+
+
+def _ixbrl_aliases(humanized: str) -> List[str]:
+    """Return aliases for an iXBRL humanized name."""
+    return _IXBRL_ALIAS_MAP.get(humanized, [])
+
+
 # ── TableIndex ────────────────────────────────────────────────────────────────
 
 class TableIndex:
@@ -162,22 +219,40 @@ class TableIndex:
 
     @classmethod
     def from_raw_cells(cls, raw_cells: List[Dict]) -> "TableIndex":
+        """Build TableIndex from raw cells.
+
+        Bug A3 fix (S17): iXBRL cells have row_header like
+        'us-gaap:NetIncomeLoss' — we ALSO index by a humanized version
+        ('net income loss') so SniperRAG patterns can match them.
+        """
         idx = cls()
         for raw in raw_cells:
+            row_header_raw = raw.get("row_header", "") or ""
+            row_header_norm = _normalise(row_header_raw)
+
+            value_raw = raw.get("value", "") or ""
             cell = TableCell(
-                row_header=_normalise(raw.get("row_header", "")),
+                row_header=row_header_norm,
                 col_header=_normalise(raw.get("col_header", "")),
-                value=raw.get("value", "").strip(),
+                value=value_raw.strip() if isinstance(value_raw, str) else str(value_raw),
                 unit=raw.get("unit", "units"),
                 page=int(raw.get("page", 0)),
                 section=raw.get("section", "UNKNOWN"),
                 company=raw.get("company", "UNKNOWN"),
                 doc_type=raw.get("doc_type", "UNKNOWN"),
                 fiscal_year=raw.get("fiscal_year", "UNKNOWN"),
-                numeric_value=_parse_numeric(raw.get("value", "")),
+                numeric_value=_parse_numeric(value_raw if isinstance(value_raw, str) else str(value_raw)),
             )
             idx._cells.append(cell)
             idx._row_map.setdefault(cell.row_header, []).append(cell)
+
+            # Bug A3: index by humanized iXBRL name AND aliases
+            humanized = _humanize_ixbrl(row_header_raw)
+            if humanized and humanized != cell.row_header:
+                idx._row_map.setdefault(humanized, []).append(cell)
+                for alias in _ixbrl_aliases(humanized):
+                    idx._row_map.setdefault(alias, []).append(cell)
+
         logger.info(
             "TableIndex built: %d cells, %d unique rows",
             len(idx._cells), len(idx._row_map),
@@ -211,64 +286,31 @@ class TableIndex:
 # ── SniperRAG ─────────────────────────────────────────────────────────────────
 
 class SniperRAG:
-    """
-    N06 SniperRAG — Tier 1 Direct Table Cell Extraction.
-
-    Two usage modes:
-        1. sniper.hit(query)       → SniperResult   (direct call)
-        2. sniper.run(ba_state)    → BAState         (LangGraph pipeline node)
-    """
+    """N06 SniperRAG — Tier 1 Direct Table Cell Extraction."""
 
     def __init__(self, table_index: TableIndex) -> None:
         self.index = table_index
 
-    # ── LangGraph pipeline node entry point ───────────────────────────────────
-
     def run(self, state) -> object:
-        """
-        LangGraph N06 node entry point.
-
-        Reads:  state.query, state.table_cells
-        Writes: state.sniper_hit, state.sniper_result, state.sniper_confidence
-
-        If table_cells are present in state but index is empty,
-        rebuilds the index from state.table_cells automatically.
-
-        Args:
-            state: BAState object
-
-        Returns:
-            BAState with sniper fields populated
-        """
-        # Rebuild index from state.table_cells if needed
+        """LangGraph N06 node entry point."""
         if self.index.is_empty() and hasattr(state, "table_cells") and state.table_cells:
             self.index = TableIndex.from_raw_cells(state.table_cells)
 
         query  = getattr(state, "query", "") or ""
         result = self.hit(query)
 
-        # Write results back to BAState
         state.sniper_hit        = result.sniper_hit
         state.sniper_result     = result.answer if result.sniper_hit else None
         state.sniper_confidence = result.confidence
 
         logger.info(
             "N06 SniperRAG: hit=%s | confidence=%.3f | pattern=%s",
-            result.sniper_hit,
-            result.confidence,
-            result.matched_pattern,
+            result.sniper_hit, result.confidence, result.matched_pattern,
         )
         return state
 
-    # ── Direct hit method ─────────────────────────────────────────────────────
-
     def hit(self, query: str) -> SniperResult:
-        """
-        Attempt direct table cell extraction for a query.
-
-        Returns SniperResult with sniper_hit=True  if confidence >= 0.95
-        Returns SniperResult with sniper_hit=False if confidence <  0.95
-        """
+        """Attempt direct table cell extraction for a query."""
         if self.index.is_empty():
             return self._miss("Table index is empty — no cells to search")
 
@@ -328,16 +370,12 @@ class SniperRAG:
             ),
         )
 
-    # ── Private helpers ───────────────────────────────────────────────────────
-
     def _identify_metric(
         self, norm_query: str
     ) -> Tuple[Optional[str], Optional[str]]:
         for name, pattern in COMPILED_PATTERNS.items():
             m = pattern.search(norm_query)
             if m:
-                # Keep full matched text — do NOT strip modifiers.
-                # Row headers in the index include words like "total" and "net".
                 matched_text = _normalise(m.group(0)).strip()
                 return matched_text, name
         return None, None
@@ -408,9 +446,7 @@ class SniperRAG:
 # ── Convenience wrapper for LangGraph N06 node ───────────────────────────────
 
 def run_sniper(query: str, table_cells: List[Dict]) -> SniperResult:
-    """
-    Convenience wrapper used by the LangGraph pipeline node N06.
-    """
+    """Convenience wrapper used by the LangGraph pipeline node N06."""
     index  = TableIndex.from_raw_cells(table_cells)
     sniper = SniperRAG(index)
     result = sniper.hit(query)
