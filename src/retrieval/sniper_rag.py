@@ -395,7 +395,15 @@ class SniperRAG:
             if fy_hint is not None:
                 cell_fy  = _normalise(cell.fiscal_year)
                 query_fy = _normalise(fy_hint)
-                if cell_fy and query_fy not in cell_fy and cell_fy not in query_fy:
+                # Bug D fix (S18): only penalize when cell has a REAL FY value.
+                # iXBRL cells often have fiscal_year='unknown' or '' — those
+                # should not be penalized (we just don't know the FY).
+                is_real_fy = (
+                    cell_fy
+                    and cell_fy != "unknown"
+                    and cell_fy not in ("", "n/a", "none")
+                )
+                if is_real_fy and query_fy not in cell_fy and cell_fy not in query_fy:
                     conf -= 0.05
             if not cell.value or cell.value in ("—", "-", "N/A", ""):
                 conf -= 0.10
