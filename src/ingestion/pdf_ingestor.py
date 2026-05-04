@@ -238,12 +238,16 @@ class PDFIngestor:
         # Bug H: backfill metadata into every table cell so that
         # SniperRAG citations show "Apple Inc./10-K/FY2023/SECTION/page"
         # instead of "UNKNOWN/UNKNOWN/UNKNOWN/SECTION/page"
+        # Bug H v2: TableCell defaults company/doc_type/fiscal_year
+        # to None (not "UNKNOWN"). Always overwrite when we have authoritative
+        # values from iXBRL metadata extraction. This ensures every cell shows
+        # "Apple Inc./10-K/FY2023" in citations instead of "None/None/None".
         for cell in table_cells:
-            if cell.get("company") in ("UNKNOWN", "", None):
+            if not cell.get("company") or cell.get("company") in ("UNKNOWN", "", None):
                 cell["company"] = company_name or "UNKNOWN"
-            if cell.get("doc_type") in ("UNKNOWN", "", None):
+            if not cell.get("doc_type") or cell.get("doc_type") in ("UNKNOWN", "", None):
                 cell["doc_type"] = doc_type or "UNKNOWN"
-            if cell.get("fiscal_year") in ("UNKNOWN", "", None):
+            if not cell.get("fiscal_year") or cell.get("fiscal_year") in ("UNKNOWN", "", None):
                 cell["fiscal_year"] = fiscal_year or "UNKNOWN"
 
         return {
@@ -616,9 +620,10 @@ class PDFIngestor:
             if scale and scale.lstrip("-").isdigit():
                 try:
                     s = int(scale)
-                    # iXBRL scale: -3=thousands, -6=millions, -9=billions
-                    # display value reads in those units
-                    if s == -3:
+                    # iXBRL scale: -2=%, -3=thousands, -6=millions, -9=billions
+                    if s == -2:
+                        unit_suffix = "%"
+                    elif s == -3:
                         unit_suffix = "thousand"
                     elif s == -6:
                         unit_suffix = "million"
