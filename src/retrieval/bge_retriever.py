@@ -276,15 +276,34 @@ class BGERetriever:
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _load_model(self):
-        """Lazy load the sentence-transformers model."""
+        """Lazy load the sentence-transformers model.
+
+        Bug E (S19): auto-detect GPU when available (Colab/cloud).
+        Falls back to CPU on laptop. Set BGE_DEVICE=cpu to force CPU.
+        """
         if self._model is None:
             st = _get_sentence_transformers()
-            logger.info("N08: Loading model '%s' ...", self.model_name)
+            # Auto-detect device — GPU on Colab, CPU on laptop
+            forced = os.environ.get("BGE_DEVICE", "").strip().lower()
+            if forced in ("cpu", "cuda", "mps"):
+                device = forced
+            else:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        device = "cuda"
+                    else:
+                        device = "cpu"
+                except Exception:
+                    device = "cpu"
+            logger.info("N08: Loading model '%s' on '%s' ...",
+                        self.model_name, device)
             self._model = st.SentenceTransformer(
                 self.model_name,
-                device="cpu",
+                device=device,
             )
-            logger.info("N08: Model loaded — %s", self.model_name)
+            logger.info("N08: Model loaded — %s on %s",
+                        self.model_name, device)
         return self._model
 
     def _get_client(self, data_dir: str):
