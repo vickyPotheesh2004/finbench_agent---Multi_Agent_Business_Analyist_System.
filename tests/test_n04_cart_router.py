@@ -326,3 +326,62 @@ class TestConvenienceWrapper:
         result = run_cart_router(state, model_dir=str(tmp_path))
         assert hasattr(result, "query_type")
         assert result.query_type in QUERY_CLASSES
+
+# ════════════════════════════════════════════════════════════════════════════
+# BUG #7 — Routers must persist after first train
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestBug7RouterPersistence:
+    """Regression for Bug #7: routers retrained on every pipeline run.
+
+    Before fix: each CARTRouter() instance trained from scratch (~5s).
+    After fix:  first instance trains+saves, subsequent instances load.
+    """
+
+    def test_first_use_saves_model_to_disk(self, tmp_path):
+        """Bug #7: _ensure_trained() must save after training."""
+        # Fresh dir → no saved model
+        router = CARTRouter(model_dir=str(tmp_path))
+        assert router.is_trained() is False
+
+        # Trigger training via classify
+        router.classify("What was net income?")
+
+        # Bug #7: model files must now exist on disk
+        model_path      = os.path.join(str(tmp_path), _MODEL_FILENAME)
+        vectorizer_path = os.path.join(str(tmp_path), _VECTORIZER_FILENAME)
+        assert os.path.exists(model_path), (
+            f"Bug #7 regression: {model_path} not saved after training"
+        )
+        assert os.path.exists(vectorizer_path)
+
+    def test_second_instance_loads_instead_of_training(self, tmp_path):
+        """Bug #7: 2nd instance with same model_dir must load (fast)."""
+        import time
+
+        # First instance trains + saves
+        r1 = CARTRouter(model_dir=str(tmp_path))
+        r1.classify("seed query")
+
+        # Second instance should load — measure time as proxy
+        t0 = time.time()
+        r2 = CARTRouter(model_dir=str(tmp_path))
+        r2.classify("another query")
+        elapsed = time.time() - t0
+
+        # Loading should be <1s; training is ~5s
+        assert elapsed < 2.0, (
+            f"Bug #7: 2nd instance took {elapsed:.2f}s "
+            f"(must be <2s — likely retraining instead of loading)"
+        )
+
+    def test_load_after_persist_returns_true(self, tmp_path):
+        """Bug #7: after auto-save, load() must succeed on fresh instance."""
+        r1 = CARTRouter(model_dir=str(tmp_path))
+        r1.classify("first call to trigger train+save")
+
+        r2 = CARTRouter(model_dir=str(tmp_path))
+        assert r2.load() is True, (
+            "Bug #7: load() should succeed because r1 saved the model"
+        )
+        assert r2.is_trained() is True

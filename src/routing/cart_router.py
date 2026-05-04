@@ -521,13 +521,24 @@ class CARTRouter:
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _ensure_trained(self) -> None:
-        """Auto-train if model not yet trained or loaded."""
+        """Auto-train if model not yet trained or loaded.
+
+        Bug #7 fix: persist trained model to disk so next instance loads
+        instead of retraining (saved ~5s per pipeline run).
+        """
         if not self._is_trained:
             loaded = self.load()
             if not loaded:
                 logger.info("N04 CART: no saved model — training now")
                 self.train()
-
+                # Bug #7: persist immediately so next call loads instead
+                try:
+                    self.save()
+                    logger.info("N04 CART: model saved for reuse")
+                except Exception as exc:
+                    logger.warning(
+                        "N04 CART: save after train failed: %s", exc
+                    )
 
 # ── Convenience wrapper for LangGraph N04 node ───────────────────────────────
 

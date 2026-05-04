@@ -235,6 +235,17 @@ class PDFIngestor:
         company_name, doc_type, fiscal_year = self._extract_metadata(
             raw_text, heading_positions
         )
+        # Bug H: backfill metadata into every table cell so that
+        # SniperRAG citations show "Apple Inc./10-K/FY2023/SECTION/page"
+        # instead of "UNKNOWN/UNKNOWN/UNKNOWN/SECTION/page"
+        for cell in table_cells:
+            if cell.get("company") in ("UNKNOWN", "", None):
+                cell["company"] = company_name or "UNKNOWN"
+            if cell.get("doc_type") in ("UNKNOWN", "", None):
+                cell["doc_type"] = doc_type or "UNKNOWN"
+            if cell.get("fiscal_year") in ("UNKNOWN", "", None):
+                cell["fiscal_year"] = fiscal_year or "UNKNOWN"
+
         return {
             "raw_text":          raw_text,
             "table_cells":       table_cells,
@@ -601,11 +612,20 @@ class PDFIngestor:
             scale = tag.get("scale", "") or ""
 
             display_value = value
+            unit_suffix = ""
             if scale and scale.lstrip("-").isdigit():
                 try:
                     s = int(scale)
-                    if s != 0:
-                        display_value = f"{value} ×10^{s}"
+                    # iXBRL scale: -3=thousands, -6=millions, -9=billions
+                    # display value reads in those units
+                    if s == -3:
+                        unit_suffix = "thousand"
+                    elif s == -6:
+                        unit_suffix = "million"
+                    elif s == -9:
+                        unit_suffix = "billion"
+                    elif s != 0:
+                        unit_suffix = f"x10^{s}"
                 except (ValueError, TypeError):
                     pass
 
@@ -616,14 +636,18 @@ class PDFIngestor:
                 if idx >= 0:
                     page = self._estimate_page_from_offset(idx)
 
-            cells.append(TableCell(
+            cell_dict = TableCell(
                 row_header   = name,
                 col_header   = ctx,
                 value        = display_value,
                 page         = page,
                 table_number = 0,
                 section      = "iXBRL_NUMERIC",
-            ).to_dict())
+            ).to_dict()
+            # Bug H: attach unit suffix to cell (used by SniperRAG citations)
+            if unit_suffix:
+                cell_dict["unit"] = unit_suffix
+            cells.append(cell_dict)
 
         # Text facts
         for tag in nonnumerics[:MAX_IXBRL_FACTS]:
