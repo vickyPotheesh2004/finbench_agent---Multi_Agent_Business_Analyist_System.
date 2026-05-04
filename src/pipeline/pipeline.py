@@ -202,14 +202,42 @@ class FinBenchPipeline:
         state = _safe_run("N04 CART Router",      run_cart_router,   state)
         state = _safe_run("N05 LR Difficulty",    run_lr_difficulty, state)
 
-        # ── Retrieval (N06 first, early-exit if sniper hits) ──────────────────
+                # ── Retrieval (N06 first, early-exit if sniper hits) ──────────────────
         state = _safe_run("N06 SniperRAG",        _run_sniper_node, state)
 
         sniper_hit = bool(getattr(state, "sniper_hit", False))
-        if not sniper_hit:
-            state = _safe_run("N07 BM25",         _run_bm25_node,    state)
-            state = _safe_run("N08 BGE-M3",       run_bge,           state)
-            state = _safe_run("N09 RRF+Reranker", run_rrf_reranker,  state)
+
+        # ── Bug F fix (S19): Sniper short-circuit ─────────────────────────────
+        # When SniperRAG hits with high confidence, its answer is authoritative
+        # — a direct table cell lookup with full citation. Skip the LLM pipeline
+        # entirely; LLM rephrasing only adds noise and hallucination risk.
+        if sniper_hit:
+            sniper_answer     = str(getattr(state, "sniper_answer",     "") or "")
+            sniper_confidence = float(getattr(state, "sniper_confidence", 0.0) or 0.0)
+            sniper_citation   = str(getattr(state, "sniper_citation",   "") or "")
+            logger.info(
+                "[PIPELINE] Sniper short-circuit: answer=%s | conf=%.3f",
+                sniper_answer[:100], sniper_confidence,
+            )
+            state.final_answer        = sniper_answer
+            state.final_answer_pre_xgb = sniper_answer
+            state.confidence_score    = sniper_confidence
+            state.winning_pod         = "SniperRAG"
+            state.low_confidence      = sniper_confidence < 0.95
+            # Run only N18 RLEF (for self-improvement) and N19 Output (for DOCX)
+            state = _safe_run("N18 RLEF Engine",      run_rlef_engine,   state)
+            state = _safe_run("N19 Output Generator", run_output_generator, state)
+            logger.info(
+                "[PIPELINE] Query complete (sniper short-circuit): "
+                "confidence=%.3f winning_pod=%s",
+                state.confidence_score, state.winning_pod,
+            )
+            return state
+
+        # ── Sniper missed → run full retrieval + analysis ─────────────────────
+        state = _safe_run("N07 BM25",             _run_bm25_node,    state)
+        state = _safe_run("N08 BGE-M3",           run_bge,           state)
+        state = _safe_run("N09 RRF+Reranker",     run_rrf_reranker,  state)
 
         # ── Analysis (N10 assembles prompt, N11/N12/N13/N14 parallel pods) ────
         state = _safe_run("N10 Prompt Assembler", run_prompt_assembler, state)
@@ -218,6 +246,7 @@ class FinBenchPipeline:
             lambda s: run_analyst_pod(s, llm_client=self.llm_client),
             state,
         )
+        
         state = _safe_run(
             "N12 CFO/Quant Pod",
             lambda s: run_cfo_quant_pod(s, llm_client=self.llm_client),
