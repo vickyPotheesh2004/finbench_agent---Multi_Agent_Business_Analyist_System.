@@ -442,13 +442,19 @@ class PDFIngestor:
         Pass 1 (lxml-xml): preserve namespaces for ix:nonFraction etc.
         Pass 2 (lxml HTML): proper layout/CSS for <span>/<div> styled headings
 
-        This is the only reliable way to handle SEC iXBRL files where the
-        document is XHTML+namespaced-XBRL, and visual headings live inside
-        XHTML <span> tags wrapped by <ix:*> tags.
+        Bug H v3 (S20): metadata extracted FIRST, then passed directly into
+        _html_extract_ixbrl_facts so cells are created WITH company/doc_type/
+        fiscal_year already set. No backfill loop needed.
         """
         raw_text          = ""
         table_cells       = []
         heading_positions = []
+
+        # ── Bug H v3: Extract metadata FIRST so we can stamp cells ───────
+        ixbrl_meta = self._html_extract_ixbrl_metadata(file_path)
+        early_company = ixbrl_meta.get("company_name", "") or ""
+        early_doctype = ixbrl_meta.get("doc_type", "")     or ""
+        early_fy      = ixbrl_meta.get("fiscal_year", "")  or ""
 
         try:
             import warnings
@@ -469,13 +475,13 @@ class PDFIngestor:
                 or "xmlns:ix=" in content
             )
 
-            # ── PASS 1: XML-aware parser for iXBRL facts + clean text ────
+            # ── PASS 1: XML-aware parser for iXBRL facts ────────────────
             try:
                 soup_xml = BeautifulSoup(content, "lxml-xml")
             except Exception:
                 soup_xml = None
 
-            # ── PASS 2: HTML parser for visual layout (styled headings) ─
+            # ── PASS 2: HTML parser for visual layout ───────────────────
             try:
                 soup_html = BeautifulSoup(content, "lxml")
             except Exception:
@@ -489,10 +495,8 @@ class PDFIngestor:
                 is_ixbrl, soup_xml is not None, soup_html is not None,
             )
 
-            # Use HTML soup for raw_text (better text concatenation in HTML mode)
             text_soup = soup_html if soup_html is not None else soup_xml
             if text_soup is not None:
-                # Strip noise
                 for tag in text_soup(["script", "style", "noscript",
                                       "meta", "link"]):
                     tag.decompose()
@@ -500,45 +504,48 @@ class PDFIngestor:
                 raw_text = re.sub(r"\n{3,}", "\n\n", raw_text)
                 raw_text = re.sub(r"[ \t]+", " ", raw_text)
 
-            # ── Step 1: iXBRL facts (XML soup, namespace-aware) ──────────
+            # ── Step 1: iXBRL facts WITH metadata stamped on each cell ─
             if is_ixbrl and soup_xml is not None:
-                ixbrl_cells = self._html_extract_ixbrl_facts(soup_xml, raw_text)
+                ixbrl_cells = self._html_extract_ixbrl_facts(
+                    soup_xml, raw_text,
+                    company=early_company,
+                    doc_type=early_doctype,
+                    fiscal_year=early_fy,
+                )
                 table_cells.extend(ixbrl_cells)
                 logger.debug("Extracted %d iXBRL facts", len(ixbrl_cells))
 
-            # ── Step 2: <h1>-<h6> headings (HTML soup) ───────────────────
             if soup_html is not None:
                 heading_positions.extend(
                     self._html_extract_headings(soup_html, raw_text)
                 )
 
-            # ── Step 3: <b>/<strong> bold-as-heading (HTML soup) ─────────
             if soup_html is not None:
                 heading_positions.extend(
                     self._html_extract_bold_headings(soup_html, raw_text)
                 )
 
-             # ── Step 4: visual styled headings (HTML soup) ───────────────
             if soup_html is not None:
                 heading_positions.extend(
                     self._html_extract_styled_headings(soup_html, raw_text)
                 )
 
-            # ── Step 4b: SEC-conventional section markers by TEXT PATTERN
-            #          (PART I, Item 1, Item 1A. etc. — these may be in
-            #           tiny 9pt spans in real 10-Ks, font-size won't find them)
             if soup_html is not None:
                 heading_positions.extend(
                     self._html_extract_sec_section_markers(soup_html, raw_text)
                 )
 
-            # ── Step 5: HTML table cells (HTML soup) ─────────────────────
+            # ── Step 5: HTML table cells (pass metadata too) ────────────
             if soup_html is not None:
                 table_cells.extend(
-                    self._html_extract_table_cells(soup_html, raw_text)
+                    self._html_extract_table_cells(
+                        soup_html, raw_text,
+                        company=early_company,
+                        doc_type=early_doctype,
+                        fiscal_year=early_fy,
+                    )
                 )
 
-            # ── Step 6: dedupe headings ───────────────────────────────────
             heading_positions = self._dedupe_headings(heading_positions)
             heading_positions = heading_positions[:MAX_VISUAL_HEADS]
 
@@ -563,20 +570,27 @@ class PDFIngestor:
         except Exception as exc:
             logger.warning("HTML error: %s", exc)
 
+        # ── Final metadata: prefer iXBRL, fallback to regex extraction ──
         company_name, doc_type, fiscal_year = self._extract_metadata(
             raw_text, heading_positions
         )
+        if early_company:
+            company_name = early_company
+        if early_fy:
+            fiscal_year = early_fy
+        if early_doctype:
+            doc_type = early_doctype
 
-        # iXBRL files have AUTHORITATIVE metadata — always override regex
-        # when iXBRL values are present (regex may match noise like CIK
-        # numbers and produce garbage like 'FY0000')
-        ixbrl_meta = self._html_extract_ixbrl_metadata(file_path)
-        if ixbrl_meta.get("company_name"):
-            company_name = ixbrl_meta["company_name"]
-        if ixbrl_meta.get("fiscal_year"):
-            fiscal_year = ixbrl_meta["fiscal_year"]
-        if ixbrl_meta.get("doc_type"):
-            doc_type = ixbrl_meta["doc_type"]
+        # ── Bug H v3: Belt-and-suspenders backfill in case any cell
+        # came through without metadata (HTML <table> path doesn't always
+        # know it's iXBRL when called) ──────────────────────────────────
+        for cell in table_cells:
+            if not cell.get("company"):
+                cell["company"] = company_name or "UNKNOWN"
+            if not cell.get("doc_type"):
+                cell["doc_type"] = doc_type or "UNKNOWN"
+            if not cell.get("fiscal_year"):
+                cell["fiscal_year"] = fiscal_year or "UNKNOWN"
 
         return {
             "raw_text":          raw_text,
@@ -593,9 +607,15 @@ class PDFIngestor:
             return 1
         return max(1, (offset // HTML_CHARS_PER_PAGE) + 1)
 
-    def _html_extract_ixbrl_facts(self, soup, raw_text: str) -> List[Dict]:
+    def _html_extract_ixbrl_facts(
+        self, soup, raw_text: str,
+        company: str = "", doc_type: str = "", fiscal_year: str = "",
+    ) -> List[Dict]:
         """Extract iXBRL <ix:nonFraction> and <ix:nonNumeric> as TableCells.
-        Must be called with the XML-mode soup (preserves namespaces)."""
+        Must be called with the XML-mode soup (preserves namespaces).
+
+        Bug H v3: accepts metadata params and stamps them on every cell.
+        """
         cells: List[Dict] = []
 
         nonfractions = (
@@ -649,9 +669,12 @@ class PDFIngestor:
                 table_number = 0,
                 section      = "iXBRL_NUMERIC",
             ).to_dict()
-            # Bug H: attach unit suffix to cell (used by SniperRAG citations)
+            # Bug H v3: stamp metadata + unit on each cell
             if unit_suffix:
                 cell_dict["unit"] = unit_suffix
+            cell_dict["company"]     = company     or "UNKNOWN"
+            cell_dict["doc_type"]    = doc_type    or "UNKNOWN"
+            cell_dict["fiscal_year"] = fiscal_year or "UNKNOWN"
             cells.append(cell_dict)
 
         # Text facts
@@ -662,14 +685,18 @@ class PDFIngestor:
                 continue
             ctx = (tag.get("contextRef", "") or "").strip()
 
-            cells.append(TableCell(
+            text_cell_dict = TableCell(
                 row_header   = name,
                 col_header   = ctx,
                 value        = value,
                 page         = 1,
                 table_number = 0,
                 section      = "iXBRL_TEXT",
-            ).to_dict())
+            ).to_dict()
+            text_cell_dict["company"]     = company     or "UNKNOWN"
+            text_cell_dict["doc_type"]    = doc_type    or "UNKNOWN"
+            text_cell_dict["fiscal_year"] = fiscal_year or "UNKNOWN"
+            cells.append(text_cell_dict)
 
         return cells
 
@@ -875,7 +902,7 @@ class PDFIngestor:
             })
         return out
 
-    def _html_extract_table_cells(self, soup, raw_text: str) -> List[Dict]:
+    def _html_extract_table_cells(self, soup, raw_text: str,company: str = "", doc_type: str = "", fiscal_year: str = "",) -> List[Dict]:
         """Extract every <td>/<th> cell with row+column headers from <table>."""
         cells: List[Dict] = []
 
