@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FDE Command Center</title>
+    <style>
+        :root {
+            --bg-dark: #0b0f19;
+            --panel-bg: #111827;
+            --card-bg: #1f2937;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent-primary: #3b82f6;
+            --accent-hover: #2563eb;
+            --border-color: #374151;
+
+            /* Category Colors */
+            --color-deep-work: #ef4444;
+            --color-lab: #8b5cf6;
+            --color-docs: #10b981;
+            --color-java: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background-color: var(--panel-bg);
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+        }
+
+        .stats-container {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .stat-box {
+            text-align: right;
+        }
+
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--accent-primary);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 300px;
+            background-color: var(--panel-bg);
+            border-right: 1px solid var(--border-color);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: inherit;
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        select,
+        input[type="text"] {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+        }
+
+        button.primary-btn {
+            background-color: var(--accent-primary);
+            color: white;
+            border: none;
+            padding: 0.75rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button.primary-btn:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .board {
+            flex: 1;
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            overflow-y: auto;
+        }
+
+        .column {
+            background-color: var(--panel-bg);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            height: fit-content;
+            max-height: 100%;
+        }
+
+        .column-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .task-count {
+            background-color: var(--card-bg);
+            padding: 0.1rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .task-list {
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            min-height: 150px;
+        }
+
+        .task-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        .task-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+        }
+
+        .task-badge {
+            display: inline-block;
+            font-size: 0.65rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .badge-deep-work {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--color-deep-work);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .badge-lab {
+            background-color: rgba(139, 92, 246, 0.1);
+            color: var(--color-lab);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+        }
+
+        .badge-docs {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--color-docs);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .badge-java {
+            background-color: rgba(245, 158, 11, 0.1);
+            color: var(--color-java);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .task-title {
+            font-size: 0.95rem;
+            line-height: 1.4;
+            margin-bottom: 1rem;
+        }
+
+        .task-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--border-color);
+            padding-top: 0.75rem;
+        }
+
+        .move-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: color 0.2s;
+        }
+
+        .move-btn:hover {
+            color: var(--text-main);
+        }
+
+        .delete-btn {
+            background: none;
+            border: none;
+            color: #ef4444;
+            cursor: pointer;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .delete-btn:hover {
+            opacity: 1;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="header-title">FDE Command Center</div>
+        <div class="stats-container">
+            <div class="stat-box">
+                <div class="stat-value" id="stat-active">0</div>
+                <div class="stat-label">Active Workloads</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="stat-deployed">0</div>
+                <div class="stat-label">Successfully Deployed</div>
+            </div>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <aside class="sidebar">
+            <h3 style="font-size: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+                Initialize Task</h3>
+            <div class="input-group">
+                <textarea id="taskText" placeholder="Define architectural goal or code objective..."></textarea>
+                <select id="taskCategory">
+                    <option value="deep-work">Deep Work (Architecture/Logic)</option>
+                    <option value="lab">The Lab (RAG/Agentic Models)</option>
+                    <option value="docs">Documentation & Handoff</option>
+                    <option value="java">Core Engineering (Java/Python)</option>
+                </select>
+                <button class="primary-btn" onclick="addTask()">Deploy to Queue</button>
+            </div>
+        </aside>
+
+        <main class="board">
+            <div class="column">
+                <div class="column-header">
+                    <span>Backlog / Queue</span>
+                    <span class="task-count" id="count-queue">0</span>
+                </div>
+                <div class="task-list" id="col-queue"></div>
+            </div>
+
+            <div class="column">
+                <div class="column-header">
+                    <span>In Progress / Building</span>
+                    <span class="task-count" id="count-progress">0</span>
+                </div>
+                <div class="task-list" id="col-progress"></div>
+            </div>
+
+            <div class="column">
+                <div class="column-header">
+                    <span>Deployed / Verified</span>
+                    <span class="task-count" id="count-deployed">0</span>
+                </div>
+                <div class="task-list" id="col-deployed"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Initial state logic tailored for an FDE transitioning from enterprise to standalone builds
+        const defaultTasks = [
+            { id: 1, text: "Refactor OMNI Trader multi-agent logic utilizing LangGraph state management.", category: "lab", status: "queue" },
+            { id: 2, text: "Re-analyze and implement missing Java core functions for the backend data processor.", category: "java", status: "queue" },
+            { id: 3, text: "Optimize AI Documentation Analysis System chunking strategy with ChromaDB.", category: "deep-work", status: "progress" },
+            { id: 4, text: "Finalize handover documentation and architecture diagrams for TCS enterprise exit.", category: "docs", status: "progress" },
+            { id: 5, text: "Establish intellectual property Visibility Moat architecture for FundLink.", category: "deep-work", status: "deployed" }
+        ];
+
+        let tasks = JSON.parse(localStorage.getItem('fdeSystemTasks'));
+
+        if (!tasks || tasks.length === 0) {
+            tasks = defaultTasks;
+            saveTasks();
+        }
+
+        function saveTasks() {
+            localStorage.setItem('fdeSystemTasks', JSON.stringify(tasks));
+        }
+
+        function getCategoryDetails(cat) {
+            switch (cat) {
+                case 'deep-work': return { class: 'badge-deep-work', label: 'Deep Work' };
+                case 'lab': return { class: 'badge-lab', label: 'The Lab' };
+                case 'docs': return { class: 'badge-docs', label: 'Docs' };
+                case 'java': return { class: 'badge-java', label: 'Core Eng' };
+                default: return { class: 'badge-deep-work', label: 'Task' };
+            }
+        }
+
+        function renderBoard() {
+            const cols = {
+                queue: document.getElementById('col-queue'),
+                progress: document.getElementById('col-progress'),
+                deployed: document.getElementById('col-deployed')
+            };
+
+            // Clear columns
+            Object.values(cols).forEach(col => col.innerHTML = '');
+
+            let counts = { queue: 0, progress: 0, deployed: 0 };
+
+            tasks.forEach(task => {
+                counts[task.status]++;
+                const details = getCategoryDetails(task.category);
+
+                const card = document.createElement('div');
+                card.className = 'task-card';
+
+                // Determine buttons based on status
+                let leftBtn = '', rightBtn = '';
+                if (task.status === 'queue') {
+                    rightBtn = `<button class="move-btn" onclick="moveTask(${task.id}, 'progress')">Start Build →</button>`;
+                } else if (task.status === 'progress') {
+                    leftBtn = `<button class="move-btn" onclick="moveTask(${task.id}, 'queue')">← Requeue</button>`;
+                    rightBtn = `<button class="move-btn" onclick="moveTask(${task.id}, 'deployed')">Deploy →</button>`;
+                } else if (task.status === 'deployed') {
+                    leftBtn = `<button class="move-btn" onclick="moveTask(${task.id}, 'progress')">← Revert</button>`;
+                }
+
+                card.innerHTML = `
+                    <span class="task-badge ${details.class}">${details.label}</span>
+                    <div class="task-title">${task.text}</div>
+                    <div class="task-controls">
+                        <div>${leftBtn}</div>
+                        <div>${rightBtn} <button class="delete-btn" onclick="deleteTask(${task.id})" style="margin-left: 10px;">🗑️</button></div>
+                    </div>
+                `;
+
+                cols[task.status].appendChild(card);
+            });
+
+            // Update UI Counters
+            document.getElementById('count-queue').innerText = counts.queue;
+            document.getElementById('count-progress').innerText = counts.progress;
+            document.getElementById('count-deployed').innerText = counts.deployed;
+
+            document.getElementById('stat-active').innerText = counts.progress;
+            document.getElementById('stat-deployed').innerText = counts.deployed;
+        }
+
+        function addTask() {
+            const text = document.getElementById('taskText').value.trim();
+            const category = document.getElementById('taskCategory').value;
+
+            if (text) {
+                const newId = tasks.length > 0 ? Math.max(...tasks.map(t => t.id)) + 1 : 1;
+                tasks.push({ id: newId, text, category, status: 'queue' });
+                document.getElementById('taskText').value = '';
+                saveTasks();
+                renderBoard();
+            }
+        }
+
+        function moveTask(id, newStatus) {
+            const taskIndex = tasks.findIndex(t => t.id === id);
+            if (taskIndex > -1) {
+                tasks[taskIndex].status = newStatus;
+                saveTasks();
+                renderBoard();
+            }
+        }
+
+        function deleteTask(id) {
+            tasks = tasks.filter(t => t.id !== id);
+            saveTasks();
+            renderBoard();
+        }
+
+        // Initialize
+        renderBoard();
+    </script>
+</body>
+
+</html>
