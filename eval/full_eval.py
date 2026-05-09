@@ -178,24 +178,41 @@ def import_pipeline():
     return FinBenchPipeline
 
 
-def ingest_document(pipeline_cls, doc_path: str) -> Optional[object]:
-    """Ingest one document and return the pipeline instance ready for queries."""
+def ingest_document(pipeline_cls, doc_path: str) -> Optional[tuple]:
+    """Ingest one document. Returns (pipeline, state) for query reuse."""
     print(f"  [ingest] {doc_path} ...", flush=True)
     t0 = time.time()
     try:
         pipeline = pipeline_cls()
-        pipeline.ingest(doc_path)
+        state = pipeline.ingest(
+            document_path = doc_path,
+            session_id    = f"eval-{datetime.now().strftime('%H%M%S')}",
+        )
         elapsed = time.time() - t0
-        print(f"  [ingest] done in {elapsed:.1f}s", flush=True)
-        return pipeline
+        chunks = getattr(state, "chunk_count", 0) or 0
+        cells  = len(getattr(state, "table_cells", []) or [])
+        print(
+            f"  [ingest] done in {elapsed:.1f}s | "
+            f"chunks={chunks} | table_cells={cells} | "
+            f"company={getattr(state, 'company_name', '?')!r} | "
+            f"FY={getattr(state, 'fiscal_year', '?')!r}",
+            flush=True,
+        )
+        return (pipeline, state)
     except Exception as exc:
         print(f"  [ingest] FAILED: {exc}", flush=True)
         traceback.print_exc()
         return None
 
 
-def run_one_question(pipeline, question_dict: Dict, timeout_sec: int = 120) -> Dict:
-    """Run a single question, return result dict."""
+def run_one_question(pipeline_state_pair, question_dict: Dict, timeout_sec: int = 120) -> Dict:
+    """Run a single question, return result dict.
+
+    Args:
+        pipeline_state_pair: (pipeline, ingested_state) tuple from ingest_document
+        question_dict: question metadata dict
+    """
+    pipeline, ingested_state = pipeline_state_pair
     qid = question_dict["id"]
     qtext = question_dict["question"]
 
@@ -219,14 +236,17 @@ def run_one_question(pipeline, question_dict: Dict, timeout_sec: int = 120) -> D
 
     t0 = time.time()
     try:
-        out = pipeline.query(qtext)
+        # Pipeline.query takes the ingested state + question
+        # Returns updated BAState (not dict)
+        out_state = pipeline.query(ingested_state, qtext)
         elapsed = time.time() - t0
 
-        result["answer"]      = str(out.get("final_answer", ""))[:500]
-        result["confidence"]  = float(out.get("confidence_score", 0.0))
-        result["winning_pod"] = str(out.get("winning_pod", ""))[:50]
-        result["sniper_hit"]  = bool(out.get("sniper_hit", False))
-        result["chunks_used"] = int(out.get("chunks_used", 0))
+        # Extract answer fields from BAState
+        result["answer"]      = str(getattr(out_state, "final_answer", "") or "")[:500]
+        result["confidence"]  = float(getattr(out_state, "confidence_score", 0.0) or 0.0)
+        result["winning_pod"] = str(getattr(out_state, "winning_pod", "") or "")[:50]
+        result["sniper_hit"]  = bool(getattr(out_state, "sniper_hit", False))
+        result["chunks_used"] = int(getattr(out_state, "chunk_count", 0) or 0)
         result["elapsed_sec"] = round(elapsed, 2)
 
     except Exception as exc:
@@ -235,7 +255,6 @@ def run_one_question(pipeline, question_dict: Dict, timeout_sec: int = 120) -> D
         result["elapsed_sec"] = round(time.time() - t0, 2)
 
     return result
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Main eval loop
@@ -297,8 +316,8 @@ def run_eval(args) -> Dict:
                 })
             continue
 
-        pipeline = ingest_document(pipeline_cls, doc_path)
-        if pipeline is None:
+        pipeline_state = ingest_document(pipeline_cls, doc_path)
+        if pipeline_state is None:
             for q in qs:
                 all_results.append({
                     **q,
@@ -311,7 +330,7 @@ def run_eval(args) -> Dict:
 
         for q_idx, q in enumerate(qs, start=1):
             print(f"  Q{q_idx}/{len(qs)} [{q['id']}] {q['key']:18s} ", end="", flush=True)
-            res = run_one_question(pipeline, q, timeout_sec=args.timeout)
+            res = run_one_question(pipeline_state, q, timeout_sec=args.timeout)
             all_results.append(res)
 
             status = "✓" if res["status"] == "OK" else "✗"
