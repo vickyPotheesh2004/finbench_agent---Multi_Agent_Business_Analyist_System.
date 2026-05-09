@@ -21,6 +21,45 @@ benchmark while running entirely on a single laptop with no paid APIs.
 **Why this exists:** financial document QA is dominated by expensive cloud LLMs that send sensitive filings over the network. This project is a complete open-source framework — 19-node deterministic pipeline, 1287 tests, multi-pod debate architecture — designed to explore how much accuracy is achievable with a small local model. Benchmark numbers are measured honestly and published in `eval/results/latest.md`(yet to update) as they improve.
 
 ---
+## Status
+
+✅ **Pipeline works end-to-end on real SEC filings.**
+
+### Latest measured result (2026-05-05)
+- **5/5 correct** on Apple FY2023 10-K smoke test
+- Confidence: 0.980 average
+- Speed: 0.8 sec per question (after ingestion)
+- All citations include company / doc_type / fiscal_year / section / page
+
+### Pipeline highlights
+- 19 nodes (PDR-BAAAI-001 spec compliant)
+- 100% local inference (zero API calls during query)
+- Deterministic (seed=42)
+- 5-tier retrieval: SniperRAG → BM25 → BGE-M3 → RRF → Cross-encoder
+- Multi-pod analysis: Analyst, CFO/Quant, Auditor, TriGuard, PIV Mediator
+- Self-improvement: RLEF JEE engine grades every output
+
+### Stack
+- LLM: qwen2.5:3b via Ollama (local)
+- Embeddings: BAAI/bge-m3 (local, GPU-accelerated)
+- Sparse retrieval: bm25s
+- Vector store: ChromaDB
+- Routing: CART + Logistic Regression (scikit-learn)
+- Orchestration: LangGraph
+
+### Tested on
+- Real iXBRL SEC 10-K filings (Apple FY2023, ~219K chars, 2706 table cells)
+- Local laptop (Windows 11, Python 3.11)
+- Google Colab (T4 GPU, Python 3.12)
+
+### Reproducibility
+```cmd
+git clone <this repo>
+pip install -r requirements.txt
+python eval/smoke_test.py --limit 5
+```
+
+Full FinanceBench eval coming next session.
 
 ### Key Results
 

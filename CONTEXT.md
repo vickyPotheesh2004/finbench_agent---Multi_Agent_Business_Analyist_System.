@@ -1,3 +1,43 @@
+## 🎉 MILESTONE — 5/5 Correct on Apple FY2023 (2026-05-05)
+
+**First production-quality smoke test result.**
+
+### Status
+- 5/5 numerical questions correct on real Apple 10-K
+- Confidence: 0.980 on every answer
+- Total time: 3.9 seconds for 5 questions (0.8s avg)
+- SniperRAG hits: 5/5
+- Pipeline runs end-to-end with no crashes
+
+### Evidence (eval/results/smoke_20260505_052030.json)
+| # | Question | Expected | Got | Citation |
+|---|----------|----------|-----|----------|
+| 1 | Total net sales FY2023 | $383,285 M | 383,285 | Apple Inc./10-K/FY2023//1 |
+| 2 | Net income FY2023 | $96,995 M | 96,995 | Apple Inc./10-K/FY2023/iXBRL_NUMERIC/28 |
+| 3 | Diluted EPS FY2023 | $6.13 | 6.13 | Apple Inc./10-K/FY2023/iXBRL_NUMERIC/28 |
+| 4 | Gross margin FY2023 | $169,148 M | 169,148 | Apple Inc./10-K/FY2023/iXBRL_NUMERIC/25 |
+| 5 | Total assets FY2023 | $352,583 M | 352,583 | Apple Inc./10-K/FY2023/iXBRL_NUMERIC/28 |
+
+### Bugs Fixed This Session
+- Bug A: SniperRAG iXBRL row_header indexing (29 patterns)
+- Bug D: FY threshold skip when fiscal_year=unknown
+- Bug E: GPU auto-detection for BGE-M3
+- Bug F: Sniper short-circuit when hit=True (THE BIG WIN)
+- Bug H v3: Metadata extracted FIRST, stamped on cells at creation
+
+### Known Open Issues (Tomorrow)
+- Bug G: CUDA OOM on Colab T4 — Ollama hogs 12GB, BGE can't fit
+  - Workaround: BGE_DEVICE=cpu environment variable
+  - Real fix: float16 BGE model OR larger Colab GPU
+  - **Doesn't block numerical questions** (Sniper short-circuits)
+- Cosmetic: "96,995 x10^6" should display as "$96,995 million"
+  - 30 min fix in src/retrieval/sniper_rag.py
+- Cosmetic: Q1 page shows "1" — section name missing for first cell
+
+### Next Step (Phase 2)
+Run full FinanceBench eval on Colab (~150 questions, 7 companies).
+Estimated baseline: 55-72%. Real number TBD.
+
 # CONTEXT.md — FinBench Multi-Agent Business Analyst AI
 # PDR-BAAAI-001 · Rev 1.0 · Session State File
 # PASTE THIS ENTIRE FILE AT THE START OF EVERY NEW AI SESSION
