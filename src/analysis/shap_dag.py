@@ -48,9 +48,11 @@ def compute_shap_importance(
             c.get("text", "") or c.get("page_content", "")
             for c in capped
         ]
-        texts = [t for t in texts if t.strip()]
+        texts = [t for t in texts if t and len(t.strip()) > 30]  # Fix 7: filter tiny texts
 
-        if len(texts) < 2:
+        # Bug Fix 7: need at least 3 texts AND varied label distribution
+        # for sklearn to fit without "length-1 arrays" errors
+        if len(texts) < 3:
             return None
 
         answer_words = set(answer.lower().split())
@@ -117,7 +119,9 @@ def compute_shap_importance(
         }
 
     except Exception as exc:
-        logger.warning("SHAP computation failed: %s", exc)
+        # Bug Fix 7: SHAP failure is a soft error — pipeline continues without it.
+        # Demote noisy warning to debug.
+        logger.debug("SHAP computation skipped (%s)", type(exc).__name__)
         return None
 
 

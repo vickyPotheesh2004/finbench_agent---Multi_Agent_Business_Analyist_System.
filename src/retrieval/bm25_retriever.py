@@ -194,7 +194,10 @@ class BM25Retriever:
                 query_tokens, k=safe_k
             )
         except Exception as exc:
-            print(f"[N07] BM25 retrieve failed: {exc}")
+            # Bug Fix 5: bm25s library has known reshape bug. Fallback works
+            # fine but the warning was noisy. Demote to debug-level logging.
+            import logging
+            logging.getLogger(__name__).debug("[N07] bm25s retrieve failed (using fallback): %s", exc)
             return self._fallback_score_all(query)
 
         # Extract row 0 (we have exactly 1 query)

@@ -901,7 +901,17 @@ class SniperRAG:
         if cell.numeric_value is not None and cell.numeric_value < 0:
             if not display_value.startswith("-"):
                 display_value = f"-{display_value.strip('()')}"
-        unit_str = f" {cell.unit}" if cell.unit and cell.unit != "units" else ""
+        # Bug Fix 6: friendly unit display (x10^6 -> million, etc.)
+        _UNIT_DISPLAY = {
+            "x10^6":      "million",
+            "x10^9":      "billion",
+            "x10^3":      "thousand",
+            "USDperShare": "per share",
+            "shares":     "shares",
+        }
+        unit_raw = cell.unit or ""
+        unit_friendly = _UNIT_DISPLAY.get(unit_raw, unit_raw)
+        unit_str = f" {unit_friendly}" if unit_friendly and unit_friendly != "units" else ""
         answer   = f"{display_value}{unit_str} [{cell.metadata_key}]"
         return SniperResult(
             sniper_hit=True, answer=answer, value=cell.value, unit=cell.unit,
