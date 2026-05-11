@@ -11,8 +11,13 @@ N14 BlindAuditor, N15 PIVMediator, N02 SectionTree summaries.
 Constraints:
     C1  $0 cost — local Ollama only
     C2  100% local — zero external network calls
-    C3  Model = gemma4:e4b (128K context, 9.6GB)
+    C3  Model = qwen2.5:3b (default)
     C5  seed=42
+
+CHANGELOG:
+    2026-05-10 S27  Bug Fix 2: timeout 120 -> 30, retries 3 -> 1,
+                    availability cache (TTL=30s), fast-fail in chat().
+                    Worst case per call: 30s instead of 360s+.
 """
 
 from __future__ import annotations
@@ -29,22 +34,26 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL    = "qwen2.5:3b"
 FALLBACK_MODEL   = "qwen2.5:3b"
 BASE_URL         = "http://localhost:11434"
-DEFAULT_TIMEOUT  = 120       # seconds
+DEFAULT_TIMEOUT  = 30        # was 120 — Bug Fix 2: cap LLM time
 DEFAULT_TEMP     = 0.1       # low temperature for factual financial QA
-MAX_RETRIES      = 3
-RETRY_DELAY      = 2.0       # seconds between retries
+MAX_RETRIES      = 1         # was 3 — Bug Fix 2: don't compound timeouts
+RETRY_DELAY      = 1.0       # seconds between retries (was 2.0)
 SEED             = 42
+
+# Bug Fix 2: availability cache (avoid 30s probe on every chat)
+_AVAILABILITY_CACHE_TTL = 30.0  # seconds
 
 
 class Gemma4Client:
     """
-    Wraps Ollama gemma4:e4b for all LLM calls in the pipeline.
+    Wraps Ollama for all LLM calls in the pipeline.
 
     Features:
-        - Automatic retry on timeout/connection error (MAX_RETRIES=3)
+        - Automatic retry on timeout/connection error (MAX_RETRIES=1 after fix)
         - Circuit breaker — trips after 3 consecutive failures
         - Health check — verifies Ollama is running before first call
-        - Streaming support — optional token streaming
+        - Availability cache — 30s TTL to avoid hammering the endpoint
+        - Fast-fail when Ollama is known unavailable (Bug Fix 2)
         - Context-first enforcement — validates C7 in prompts
     """
 
@@ -71,6 +80,10 @@ class Gemma4Client:
         self._total_failures   = 0
         self._last_latency_ms  = 0.0
 
+        # Bug Fix 2: availability cache (instance-level)
+        self._avail_cache: Optional[bool]   = None
+        self._avail_checked_at: float       = 0.0
+
     # ── Primary interface ─────────────────────────────────────────────────────
 
     def chat(
@@ -81,7 +94,7 @@ class Gemma4Client:
         system:      str   = "",
     ) -> str:
         """
-        Send a prompt to Gemma4 and return the response text.
+        Send a prompt to the LLM and return the response text.
 
         Args:
             prompt      : The user prompt (context MUST come before question)
@@ -91,7 +104,20 @@ class Gemma4Client:
 
         Returns:
             Response text string. Empty string on failure.
+
+        Bug Fix 2 protections:
+            1. Fast-fail when Ollama is unavailable (cached check, ~0s)
+            2. Reduced timeout 30s + 1 retry instead of 120s + 3 retries
+            3. Circuit breaker (existing) trips on 3 consecutive failures
         """
+        # ── Bug Fix 2 Layer 1: fast-fail when Ollama is known down ──
+        # This avoids 30s × MAX_RETRIES wasted on every call when service
+        # is dead. Cached availability check returns in ~0s.
+        if not self.is_available():
+            logger.warning("[LLM] Ollama unavailable — fast-fail (0s)")
+            return ""
+
+        # ── Bug Fix 2 Layer 2: existing circuit breaker ──
         if self._circuit_open:
             if time.time() - self._circuit_open_at > self._circuit_reset_s:
                 logger.info("[LLM] Circuit breaker reset — retrying")
@@ -122,6 +148,8 @@ class Gemma4Client:
                     "[LLM] Attempt %d/%d failed: %s",
                     attempt, MAX_RETRIES, exc,
                 )
+                # On error, invalidate availability cache so next call re-checks
+                self._avail_cache = None
                 if attempt < MAX_RETRIES:
                     time.sleep(RETRY_DELAY * attempt)
 
@@ -131,7 +159,10 @@ class Gemma4Client:
         if self._failure_count >= MAX_RETRIES:
             self._circuit_open    = True
             self._circuit_open_at = time.time()
-            logger.error("[LLM] Circuit breaker TRIPPED after %d failures", self._failure_count)
+            logger.error(
+                "[LLM] Circuit breaker TRIPPED after %d failures",
+                self._failure_count,
+            )
 
         return ""
 
@@ -163,19 +194,37 @@ class Gemma4Client:
     def is_available(self) -> bool:
         """
         Check if Ollama is running and model is available.
-        Returns True if healthy, False otherwise.
-        Zero side effects — safe to call frequently.
+
+        Bug Fix 2: cache result for 30s (TTL = _AVAILABILITY_CACHE_TTL).
+        First call probes the /api/tags endpoint with 3s timeout.
+        Subsequent calls within TTL reuse the cached result (returns ~0s).
+
+        When Ollama is dead, this saves the timeout × every chat() call.
         """
+        now = time.time()
+
+        # Use cached result if fresh
+        if self._avail_cache is not None:
+            if (now - self._avail_checked_at) < _AVAILABILITY_CACHE_TTL:
+                return self._avail_cache
+
         try:
             import urllib.request
             url = f"{self.base_url}/api/tags"
-            with urllib.request.urlopen(url, timeout=5) as resp:
+            with urllib.request.urlopen(url, timeout=3) as resp:  # was 5s
                 if resp.status != 200:
+                    self._avail_cache = False
+                    self._avail_checked_at = now
                     return False
                 data   = json.loads(resp.read().decode())
                 models = [m.get("name", "") for m in data.get("models", [])]
-                return any(self.model in m for m in models)
+                result = any(self.model in m for m in models)
+                self._avail_cache = result
+                self._avail_checked_at = now
+                return result
         except Exception:
+            self._avail_cache = False
+            self._avail_checked_at = now
             return False
 
     def health_check(self) -> Dict[str, Any]:
@@ -200,9 +249,12 @@ class Gemma4Client:
 
     def reset_circuit(self) -> None:
         """Manually reset the circuit breaker."""
-        self._circuit_open   = False
-        self._failure_count  = 0
+        self._circuit_open    = False
+        self._failure_count   = 0
         self._circuit_open_at = 0.0
+        # Also invalidate availability cache
+        self._avail_cache       = None
+        self._avail_checked_at  = 0.0
         logger.info("[LLM] Circuit breaker manually reset")
 
     # ── Private ───────────────────────────────────────────────────────────────
@@ -215,7 +267,7 @@ class Gemma4Client:
         system:      str,
     ) -> str:
         """
-        Make HTTP POST to Ollama /api/generate.
+        Make HTTP POST to Ollama /api/chat.
         Uses stdlib urllib only — zero extra dependencies.
         C2: no external network — localhost only.
         """

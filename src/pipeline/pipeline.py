@@ -3,25 +3,13 @@ src/pipeline/pipeline.py
 FinBench Multi-Agent Business Analyst AI
 PDR-BAAAI-001 · Rev 1.0
 
-FinBench Pipeline — Thin Wrapper Over run_*(state) Functions
-
-Design principle: this module does NOT duplicate node logic. Each node
-has its own run_*(state) function in its own module. This wrapper simply
-sequences those calls in the correct order and preserves the external API
-(ingest / query / run) that app.py and run_eval.py depend on.
-
-Pipeline flow:
-    INGEST    N01 -> N02 -> N03
-    QUERY     N04 -> N05 -> (N06 short-circuit? -> N10 -> ... )
-                          -> N07 -> N08 -> N09
-                          -> N10 -> N11 -> N12 -> N13 -> N14
-                          -> N15 -> N16 -> N17 -> N18 -> N19
-
-Constraints:
-    C1  $0 cost — reuses existing node functions
-    C2  100% local
-    C5  seed=42 applied by SeedManager at BAState init
-    C9  No _rlef_ fields in outputs
+CHANGELOG:
+    2026-05-10 S27  Bug Fix 2 v2: Refined early-exit logic.
+                    - Check BM25 hits (0 = strong "no data" signal) since BGE
+                      always returns chunks even for garbage queries.
+                    - Check retrieval_stage_2 top score < 0.3 (low confidence).
+                    - Detect LLM unavailable BEFORE running PIV pods, not after.
+                    - Skip SHAP, N16, N17 when early-exit fires.
 """
 
 from __future__ import annotations
@@ -85,12 +73,7 @@ except ImportError:
 # ─── Retrieval wrappers (some nodes have unique signatures) ───────────────────
 
 def _run_sniper_node(state) -> object:
-    """Adapter: run_sniper takes (query, table_cells) not (state).
-
-    Bug A fix (S17): unpack SniperResult dataclass into individual
-    BAState fields. Previously wrote the whole object into a str field
-    causing Pydantic validation error and silently dropping all hits.
-    """
+    """Adapter: run_sniper takes (query, table_cells) not (state)."""
     query = getattr(state, "query",       "") or ""
     cells = getattr(state, "table_cells", []) or []
     if not query or not cells:
@@ -101,7 +84,6 @@ def _run_sniper_node(state) -> object:
 
     try:
         result: SniperResult = run_sniper(query, cells)
-        # Unpack into individual string/float/bool fields
         state.sniper_hit        = bool(result.sniper_hit)
         state.sniper_confidence = float(result.confidence)
         state.sniper_answer     = str(result.answer  or "")
@@ -109,7 +91,6 @@ def _run_sniper_node(state) -> object:
         state.sniper_unit       = str(result.unit    or "")
         state.sniper_citation   = str(result.citation or "")
         state.sniper_pattern    = str(result.matched_pattern or "")
-        # sniper_result stays as a human-readable answer string (or None)
         state.sniper_result     = result.answer if result.sniper_hit else None
     except Exception as exc:
         logger.warning("[N06] SniperRAG failed: %s", exc)
@@ -131,19 +112,85 @@ def _run_bm25_node(state) -> object:
         return state
 
 
+# ─── Early-exit helpers (Bug Fix 2 v2) ────────────────────────────────────────
+
+def _check_llm_available(llm_client) -> bool:
+    """Fast check if LLM is reachable. Uses cached is_available()."""
+    if llm_client is None:
+        return False
+    try:
+        return bool(llm_client.is_available())
+    except Exception:
+        return False
+
+
+def _check_retrieval_quality(state) -> tuple:
+    """Decide if retrieval has enough signal to warrant LLM analysis.
+
+    Returns (has_signal: bool, reason: str).
+
+    Strategy:
+    - BM25 returns 0 results for genuine garbage queries (keyword miss).
+      BGE returns 10 chunks for everything (semantic always matches).
+      So BM25=0 is a reliable garbage signal.
+    - retrieval_stage_2 (RRF reranker) top score < 0.3 indicates
+      no chunk was strongly relevant.
+    """
+    bm25_hits = len(getattr(state, "bm25_results", []) or [])
+    bge_hits  = len(getattr(state, "bge_results",  []) or [])
+    stage2    = getattr(state, "retrieval_stage_2", []) or []
+
+    if bm25_hits == 0 and bge_hits == 0 and len(stage2) == 0:
+        return False, "all retrievers returned 0 chunks"
+
+    # BM25 zero is a strong signal of "no real keyword match"
+    if bm25_hits == 0 and len(stage2) > 0:
+        # Check if stage2 (reranker output) has decent scores
+        top_score = 0.0
+        for chunk in stage2[:3]:
+            if isinstance(chunk, dict):
+                score = chunk.get("score") or chunk.get("rerank_score") or 0.0
+                top_score = max(top_score, float(score or 0.0))
+        if top_score < 0.3:
+            return False, f"BM25=0 and stage2 top score {top_score:.2f} < 0.3"
+
+    return True, f"BM25={bm25_hits}, BGE={bge_hits}, stage2={len(stage2)}"
+
+
+def _build_early_exit_state(state, reason: str, label: str, conf: float,
+                             include_preview: bool = False) -> object:
+    """Set state fields for an early-exit answer + run only RLEF + Output."""
+    if include_preview:
+        top_chunk = ""
+        for src_list in [
+            getattr(state, "retrieval_stage_2", []) or [],
+            getattr(state, "bge_results",       []) or [],
+            getattr(state, "bm25_results",      []) or [],
+        ]:
+            if src_list:
+                top = src_list[0]
+                if isinstance(top, dict):
+                    top_chunk = (top.get("text") or top.get("content") or "")[:300]
+                    if top_chunk:
+                        break
+        state.final_answer = f"{label}: {reason}. Preview: {top_chunk}"
+    else:
+        state.final_answer = f"{label}: {reason}"
+
+    state.final_answer_pre_xgb = state.final_answer
+    state.confidence_score = conf
+    state.winning_pod = label
+    state.low_confidence = True
+    # Run RLEF (logging) + Output (DOCX) only — skip SHAP, N17 to save time
+    state = _safe_run("N18 RLEF Engine", run_rlef_engine, state)
+    state = _safe_run("N19 Output Generator", run_output_generator, state)
+    return state
+
+
 # ─── FinBenchPipeline (external API) ──────────────────────────────────────────
 
 class FinBenchPipeline:
-    """
-    Thin orchestrator over run_*(state) node functions.
-
-    Preserves the original external API so app.py and run_eval.py keep
-    working unchanged:
-        pipeline = FinBenchPipeline()
-        state    = pipeline.ingest(document_path=..., session_id=..., ...)
-        state    = pipeline.query(state, question)
-        state    = pipeline.run(document_path, question)
-    """
+    """Thin orchestrator over run_*(state) node functions."""
 
     def __init__(self) -> None:
         self.llm_client = None
@@ -202,19 +249,15 @@ class FinBenchPipeline:
         state = _safe_run("N04 CART Router",      run_cart_router,   state)
         state = _safe_run("N05 LR Difficulty",    run_lr_difficulty, state)
 
-                # ── Retrieval (N06 first, early-exit if sniper hits) ──────────────────
+        # ── Retrieval (N06 first, early-exit if sniper hits) ──────────────────
         state = _safe_run("N06 SniperRAG",        _run_sniper_node, state)
 
         sniper_hit = bool(getattr(state, "sniper_hit", False))
 
-        # ── Bug F fix (S19): Sniper short-circuit ─────────────────────────────
-        # When SniperRAG hits with high confidence, its answer is authoritative
-        # — a direct table cell lookup with full citation. Skip the LLM pipeline
-        # entirely; LLM rephrasing only adds noise and hallucination risk.
+        # ── Bug F fix (S19): Sniper short-circuit on TRUE hit ─────────────────
         if sniper_hit:
             sniper_answer     = str(getattr(state, "sniper_answer",     "") or "")
             sniper_confidence = float(getattr(state, "sniper_confidence", 0.0) or 0.0)
-            sniper_citation   = str(getattr(state, "sniper_citation",   "") or "")
             logger.info(
                 "[PIPELINE] Sniper short-circuit: answer=%s | conf=%.3f",
                 sniper_answer[:100], sniper_confidence,
@@ -224,7 +267,6 @@ class FinBenchPipeline:
             state.confidence_score    = sniper_confidence
             state.winning_pod         = "SniperRAG"
             state.low_confidence      = sniper_confidence < 0.95
-            # Run only N18 RLEF (for self-improvement) and N19 Output (for DOCX)
             state = _safe_run("N18 RLEF Engine",      run_rlef_engine,   state)
             state = _safe_run("N19 Output Generator", run_output_generator, state)
             logger.info(
@@ -234,10 +276,43 @@ class FinBenchPipeline:
             )
             return state
 
-        # ── Sniper missed → run full retrieval + analysis ─────────────────────
+        # ── Bug Fix 2 v2: Check LLM availability BEFORE retrieval ─────────────
+        # If LLM is dead, we know PIV pods will fail. We still run retrieval
+        # so we can return chunk preview, but we skip the analysis pods.
+        llm_available = _check_llm_available(self.llm_client)
+
+        # ── Sniper missed → run retrieval ─────────────────────────────────────
         state = _safe_run("N07 BM25",             _run_bm25_node,    state)
         state = _safe_run("N08 BGE-M3",           run_bge,           state)
         state = _safe_run("N09 RRF+Reranker",     run_rrf_reranker,  state)
+
+        # ── Bug Fix 2 v2: Retrieval quality check ────────────────────────────
+        has_signal, reason = _check_retrieval_quality(state)
+
+        # Branch A: low-quality retrieval (likely garbage query)
+        if not has_signal:
+            logger.warning("[PIPELINE] Early exit: %s", reason)
+            return _build_early_exit_state(
+                state,
+                reason=reason,
+                label="INSUFFICIENT_DATA",
+                conf=0.0,
+                include_preview=False,
+            )
+
+        # Branch B: chunks exist but LLM is dead — return chunks preview
+        if not llm_available:
+            logger.warning(
+                "[PIPELINE] Early exit: LLM unavailable, %s "
+                "but no analyst pod can run", reason,
+            )
+            return _build_early_exit_state(
+                state,
+                reason=f"Retrieved chunks ({reason}) but LLM is not running",
+                label="LLM_UNAVAILABLE",
+                conf=0.30,
+                include_preview=True,
+            )
 
         # ── Analysis (N10 assembles prompt, N11/N12/N13/N14 parallel pods) ────
         state = _safe_run("N10 Prompt Assembler", run_prompt_assembler, state)
@@ -246,7 +321,7 @@ class FinBenchPipeline:
             lambda s: run_analyst_pod(s, llm_client=self.llm_client),
             state,
         )
-        
+
         state = _safe_run(
             "N12 CFO/Quant Pod",
             lambda s: run_cfo_quant_pod(s, llm_client=self.llm_client),
@@ -275,7 +350,6 @@ class FinBenchPipeline:
         state = _safe_run("N18 RLEF Engine",      run_rlef_engine,   state)
         state = _safe_run("N19 Output Generator", run_output_generator, state)
 
-        # Optional: PDF report (N19b) runs on demand from UI, not here
         logger.info(
             "[PIPELINE] Query complete: confidence=%.3f winning_pod=%s",
             float(getattr(state, "confidence_score", 0.0) or 0.0),
@@ -294,10 +368,7 @@ class FinBenchPipeline:
 # ─── Safety harness ───────────────────────────────────────────────────────────
 
 def _safe_run(label: str, fn, state) -> object:
-    """
-    Run a node function with exception isolation.
-    If one node fails, log and continue — never crash the pipeline.
-    """
+    """Run a node function with exception isolation."""
     try:
         result = fn(state)
         return result if result is not None else state
