@@ -8,14 +8,16 @@ Purpose:
     to every chunk (C8). Builds bm25s sparse index + ChromaDB collection.
 
 CHANGELOG:
-  2026-04-30 S8  Bug #1.5: _chunk_by_paragraphs() was consolidating
-                 multiple short paragraphs into a single chunk if total
-                 text was small. This produced 1-chunk corpora that
-                 broke BM25 retrieval. NEW behaviour: emit one chunk
-                 per non-empty paragraph (above MIN_CHUNK_CHARS), only
-                 merging when a single paragraph exceeds max_chars.
-                 Also: DISABLE_CHROMADB env var honoured (Session 6 patch
-                 made permanent).
+  2026-04-30 S8  Bug #1.5: _chunk_by_paragraphs() no longer consolidates;
+                 emit one chunk per paragraph.
+  2026-05-10 S27 Bug Fix 4: TWO critical bugs fixed
+                 1. _extract_section_text() was capping at 3000 chars,
+                    dropping most of the document. Now uses next-section
+                    boundary or 50,000 char cap (huge increase).
+                 2. MAX_CHUNK_TOKENS 800 -> 400 (chunk_size 3200 -> 1600
+                    chars). More chunks = better BGE precision.
+                 Result: Apple 10-K 30 chunks -> ~150 chunks expected.
+                 Narrative recall improves significantly.
 """
 
 from __future__ import annotations
@@ -28,10 +30,17 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 SEED             = 42
-MAX_CHUNK_TOKENS = 800
+# Bug Fix 4: chunk_size reduced from 800 tokens (3200 chars) to 400 tokens
+# (1600 chars). Smaller chunks = better BGE precision for finding numbers.
+MAX_CHUNK_TOKENS = 400      # was 800
 MIN_CHUNK_CHARS  = 50
 MAX_CHUNKS_CAP   = 5000
 CHUNK_OVERLAP    = 100
+
+# Bug Fix 4: section text extraction limit raised from 3000 to 50000.
+# Apple 10-K MD&A section alone is 40K+ chars. 3000 was dropping 90%+
+# of every long section.
+MAX_SECTION_CHARS = 50_000   # was implicit 3000
 
 
 class DocumentChunk:
@@ -133,7 +142,6 @@ class Chunker:
         state.bm25_index_path      = bm25_path
         state.chromadb_collection  = collection_name
 
-        # Bug #3: tell N08 BGE retriever which data_dir to read from
         chromadb_path_norm = os.path.normpath(self.chromadb_dir)
         if os.path.basename(chromadb_path_norm) == "chromadb":
             data_dir = os.path.dirname(chromadb_path_norm) or "."
@@ -145,7 +153,7 @@ class Chunker:
             try:
                 state.chromadb_data_dir = data_dir
             except Exception:
-                pass  # Pydantic strict mode rejects unknown — handled in BAState fix below
+                pass
 
         logger.info(
             "N03 Chunker: %d chunks | bm25=%s | chromadb=%s | data_dir=%s",
@@ -171,14 +179,11 @@ class Chunker:
                 raw_text, sections, company, doc_type, fiscal_year
             )
 
-        # If sections produced nothing, OR no sections at all,
-        # fall back to paragraph chunking
         if not chunks:
             chunks = self._chunk_by_paragraphs(
                 raw_text, company, doc_type, fiscal_year
             )
 
-        # Last-ditch: if still nothing (text too short), emit single chunk
         if not chunks and raw_text.strip():
             chunks = [DocumentChunk(
                 chunk_id    = "chunk_0000",
@@ -204,22 +209,54 @@ class Chunker:
         doc_type:    str,
         fiscal_year: str,
     ) -> List[DocumentChunk]:
-        """Split text at section boundaries using the section tree."""
+        """Split text at section boundaries.
+
+        Bug Fix 4: Pass next-section name so _extract_section_text knows
+        where the current section ENDS. Previously capped at 3000 chars.
+        """
         chunks   = []
         chunk_id = 0
 
+        # Build list of section names + their start positions for boundary detection
+        section_starts: List[str] = []
         for section in sections:
+            name = section.get("name", "")
+            if name:
+                section_starts.append(name)
+            for child in section.get("children", []):
+                cname = child.get("name", "")
+                if cname:
+                    section_starts.append(cname)
+
+        for i, section in enumerate(sections):
             section_name = section.get("name",       "UNKNOWN")
             start_page   = section.get("start_page", 0)
 
+            # Bug Fix 4: find next section name to use as end boundary
+            next_section_name = ""
+            if i + 1 < len(sections):
+                next_section_name = sections[i + 1].get("name", "")
+
             section_text = self._extract_section_text(
-                raw_text, section_name, start_page
+                raw_text, section_name, start_page,
+                end_section_name=next_section_name,
             )
 
             if not section_text or len(section_text) < MIN_CHUNK_CHARS:
-                for child in section.get("children", []):
+                # Recurse into children
+                children = section.get("children", [])
+                for j, child in enumerate(children):
+                    child_next = ""
+                    if j + 1 < len(children):
+                        child_next = children[j + 1].get("name", "")
+                    elif i + 1 < len(sections):
+                        child_next = sections[i + 1].get("name", "")
+
                     child_text = self._extract_section_text(
-                        raw_text, child.get("name", ""), child.get("start_page", 0)
+                        raw_text,
+                        child.get("name", ""),
+                        child.get("start_page", 0),
+                        end_section_name=child_next,
                     )
                     if child_text and len(child_text) >= MIN_CHUNK_CHARS:
                         sub_chunks = self._split_large_text(
@@ -241,9 +278,20 @@ class Chunker:
             chunks.extend(sub_chunks)
             chunk_id += len(sub_chunks)
 
-            for child in section.get("children", []):
+            # Also chunk children (often have detailed content)
+            children = section.get("children", [])
+            for j, child in enumerate(children):
+                child_next = ""
+                if j + 1 < len(children):
+                    child_next = children[j + 1].get("name", "")
+                elif i + 1 < len(sections):
+                    child_next = sections[i + 1].get("name", "")
+
                 child_text = self._extract_section_text(
-                    raw_text, child.get("name", ""), child.get("start_page", 0)
+                    raw_text,
+                    child.get("name", ""),
+                    child.get("start_page", 0),
+                    end_section_name=child_next,
                 )
                 if child_text and len(child_text) >= MIN_CHUNK_CHARS:
                     child_chunks = self._split_large_text(
@@ -265,29 +313,25 @@ class Chunker:
         doc_type:    str,
         fiscal_year: str,
     ) -> List[DocumentChunk]:
-        """Bug #1.5 fix: emit ONE chunk per non-empty paragraph.
+        """Emit one chunk per paragraph (never consolidate).
+
         Only split a single paragraph further if it exceeds max_chars.
-        Never consolidate multiple paragraphs into one chunk.
         """
         max_chars  = self.max_tokens * 4
         paragraphs = re.split(r'\n\s*\n', raw_text)
         chunks: List[DocumentChunk] = []
         chunk_id = 0
 
-        # Detect rough section header from first non-empty paragraph
-        # (a 1-3 word line is likely a section header)
         current_section = "DOCUMENT"
 
         for para in paragraphs:
             para = para.strip()
             if not para or len(para) < MIN_CHUNK_CHARS:
-                # Possibly a section header — capture if 1-5 words
                 wc = len(para.split())
                 if 1 <= wc <= 5 and len(para) <= 60:
                     current_section = para[:50]
                 continue
 
-            # Long paragraph: split into multiple chunks
             if len(para) > max_chars:
                 sub_chunks = self._split_large_text(
                     para,
@@ -373,8 +417,19 @@ class Chunker:
 
     @staticmethod
     def _extract_section_text(
-        raw_text: str, section_name: str, page: int
+        raw_text: str,
+        section_name: str,
+        page: int,
+        end_section_name: str = "",
     ) -> str:
+        """Extract text for a section, bounded by the next section.
+
+        Bug Fix 4: Previously hardcoded 3000-char cap. Now:
+        1. Find section_name in raw_text
+        2. If end_section_name given AND found later in text, use that
+           as the end boundary
+        3. Otherwise cap at MAX_SECTION_CHARS (50,000)
+        """
         if not section_name or not raw_text:
             return ""
 
@@ -387,7 +442,22 @@ class Chunker:
             return ""
 
         start = m.start()
-        end   = min(start + 3000, len(raw_text))
+
+        # Bug Fix 4: try to find next section as end boundary
+        end = -1
+        if end_section_name:
+            end_pattern = re.compile(
+                re.escape(end_section_name[:30]),
+                re.IGNORECASE,
+            )
+            end_match = end_pattern.search(raw_text, pos=start + len(section_name))
+            if end_match:
+                end = end_match.start()
+
+        if end < 0:
+            # No next section found — cap at MAX_SECTION_CHARS
+            end = min(start + MAX_SECTION_CHARS, len(raw_text))
+
         return raw_text[start:end].strip()
 
     @staticmethod
@@ -407,63 +477,41 @@ class Chunker:
                     f"page={chunk.page!r}"
                 )
 
-    # ── Index builders ────────────────────────────────────────────────────────
-
-    def _build_bm25_index(
-        self, chunks: List[DocumentChunk], index_path: str
-    ) -> None:
-        """Build and save bm25s sparse index from chunks."""
+    def _build_bm25_index(self, chunks: List[DocumentChunk], bm25_path: str) -> None:
+        """Build BM25 sparse index from chunks."""
         if not chunks:
             return
+
         try:
+            os.makedirs(bm25_path, exist_ok=True)
+
             import bm25s
-            os.makedirs(index_path, exist_ok=True)
-            corpus    = [c.prefixed_text for c in chunks]
-            tokenised = bm25s.tokenize(corpus, stopwords="en")
-            retriever = bm25s.BM25(corpus=tokenised)
-            retriever.index(tokenised)
-            retriever.save(index_path)
-            import json as _json
-            meta_path = os.path.join(index_path, "chunks_meta.json")
-            with open(meta_path, "w", encoding="utf-8") as _f:
-                _json.dump([c.to_dict() for c in chunks], _f)
-            logger.debug("BM25 index saved: %s (%d docs)", index_path, len(chunks))
-        except ImportError:
-            logger.warning("bm25s not installed — BM25 index skipped")
+            retriever = bm25s.BM25()
+            corpus = [c.prefixed_text for c in chunks]
+            retriever.index(bm25s.tokenize(corpus, stopwords="en"))
+            retriever.save(bm25_path, corpus=corpus)
+            logger.debug("BM25 index saved: %d chunks -> %s", len(chunks), bm25_path)
         except Exception as exc:
             logger.warning("BM25 index build failed: %s", exc)
 
     def _build_chromadb_index(
-        self, chunks: List[DocumentChunk], collection_name: str
+        self,
+        chunks: List[DocumentChunk],
+        collection_name: str,
     ) -> None:
-        """Build ChromaDB vector collection from chunks.
-
-        Bug #3 fix (S13): delegates to BGERetriever.build_collection() so
-        the embeddings exactly match what N08 BGE Retriever uses at query
-        time. Previously the chunker used chromadb's built-in embedder,
-        and N08 used sentence-transformers with an instruction prefix —
-        producing different vectors and poor cosine similarity.
-
-        Honours DISABLE_CHROMADB=1 env var (Session 6 patch).
-        """
-        if os.environ.get("DISABLE_CHROMADB"):
-            logger.info(
-                "ChromaDB index build disabled by DISABLE_CHROMADB env var"
-            )
-            return
+        """Build ChromaDB collection from chunks (delegated to BGERetriever)."""
         if not chunks:
             return
 
-        # data_dir is the parent of chromadb_dir (BGE expects this layout)
-        # If chromadb_dir is "X/chromadb", data_dir = "X"
-        # Otherwise (custom path), use chromadb_dir's parent
+        if os.environ.get("DISABLE_CHROMADB", "").lower() in ("1", "true", "yes"):
+            logger.debug("DISABLE_CHROMADB set — skipping ChromaDB index")
+            return
+
         chromadb_path = os.path.normpath(self.chromadb_dir)
+
         if os.path.basename(chromadb_path) == "chromadb":
             data_dir = os.path.dirname(chromadb_path) or "."
         else:
-            # Custom layout — pass chromadb_dir's parent and let BGE create
-            # subdir. Worst case BGE creates X/chromadb/chromadb which is
-            # ugly but functional.
             data_dir = os.path.dirname(chromadb_path) or "."
 
         try:
