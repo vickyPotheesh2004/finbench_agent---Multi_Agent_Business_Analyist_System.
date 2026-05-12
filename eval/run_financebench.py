@@ -6,8 +6,8 @@ test set. Compares to 2026 frontier baselines.
 
 Usage:
     python eval/run_financebench.py --seed 42
-    python eval/run_financebench.py --limit 5      # quick smoke test
-    python eval/run_financebench.py --resume       # resume from partial save
+    python eval/run_financebench.py --limit 5
+    python eval/run_financebench.py --resume
 
 Baselines (April 2026 awesomeagents.ai/leaderboards):
     o3:              ~90%      GPT-5:           ~88%
@@ -32,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 
-from src.pipeline.pipeline import FinBenchPipeline  # noqa: E402
+from src.pipeline.pipeline import FinBenchPipeline
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("financebench_eval")
@@ -124,6 +124,15 @@ def load_questions(limit: int = 0) -> list:
     return questions
 
 
+def _short_id(fid) -> str:
+    """Normalize financebench_id (which is a string) to a short display label."""
+    s = str(fid)
+    # Strip "financebench_id_" prefix if present
+    if s.startswith("financebench_id_"):
+        s = s[len("financebench_id_"):]
+    return s[:10].ljust(10)
+
+
 def run_eval(args) -> list:
     questions = load_questions(limit=args.limit)
     logger.info("Loaded %d FinanceBench questions", len(questions))
@@ -196,7 +205,7 @@ def run_eval(args) -> list:
                 elapsed = time.time() - t0
                 pred = str(getattr(state, "final_answer", "") or "")
                 correct, match_type, score = is_correct(pred, q["gold_answer"])
-                pod = getattr(state, "winning_pod", "?")
+                pod = getattr(state, "winning_pod", "?") or "?"
                 results.append({
                     "financebench_id": q["financebench_id"],
                     "question": q["question"][:200], "gold": q["gold_answer"][:200],
@@ -205,12 +214,16 @@ def run_eval(args) -> list:
                     "score": round(score, 3), "elapsed_sec": round(elapsed, 1),
                 })
                 mark = "✓" if correct else "✗"
-                print(f"   {mark} {q['financebench_id']:4d} ({match_type:>16}) {elapsed:>5.1f}s  {pod[:18]:<18}  pred={pred[:60]}")
+                # Fix Bug 1: financebench_id is a STRING, not int — use _short_id helper
+                fid = _short_id(q["financebench_id"])
+                print(f"   {mark} {fid} ({match_type:>16}) {elapsed:>5.1f}s  {pod[:18]:<18}  pred={pred[:60]}")
             except Exception as exc:
-                print(f"   ✗ {q['financebench_id']:4d} ERROR: {exc}")
+                fid = _short_id(q.get("financebench_id", "?"))
+                print(f"   ✗ {fid} ERROR: {exc}")
                 results.append({
-                    "financebench_id": q["financebench_id"],
-                    "question": q["question"][:200], "gold": q["gold_answer"][:200],
+                    "financebench_id": q.get("financebench_id", "?"),
+                    "question": q.get("question", "")[:200],
+                    "gold": q.get("gold_answer", "")[:200],
                     "error": str(exc)[:300], "correct": False, "match_type": "exception",
                 })
 
