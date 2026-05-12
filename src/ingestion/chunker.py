@@ -478,7 +478,12 @@ class Chunker:
                 )
 
     def _build_bm25_index(self, chunks: List[DocumentChunk], bm25_path: str) -> None:
-        """Build BM25 sparse index from chunks."""
+        """Build BM25 sparse index from chunks.
+
+        Bug Y2 fix (2026-05-12): Also persist chunks_meta.json so BM25Retriever
+        can load chunk metadata at query time. Without this file, BM25Retriever
+        silently returns 0 results and the entire FinanceBench eval scored 0%.
+        """
         if not chunks:
             return
 
@@ -490,7 +495,17 @@ class Chunker:
             corpus = [c.prefixed_text for c in chunks]
             retriever.index(bm25s.tokenize(corpus, stopwords="en"))
             retriever.save(bm25_path, corpus=corpus)
-            logger.debug("BM25 index saved: %d chunks -> %s", len(chunks), bm25_path)
+
+            # Bug Y2: persist chunks metadata for BM25Retriever to load at query time
+            import json
+            chunks_meta_path = os.path.join(bm25_path, "chunks_meta.json")
+            chunks_dict = [c.to_dict() for c in chunks]
+            with open(chunks_meta_path, "w", encoding="utf-8") as f:
+                json.dump(chunks_dict, f, ensure_ascii=False)
+            logger.info(
+                "BM25 index + meta saved: %d chunks -> %s",
+                len(chunks), bm25_path,
+            )
         except Exception as exc:
             logger.warning("BM25 index build failed: %s", exc)
 
