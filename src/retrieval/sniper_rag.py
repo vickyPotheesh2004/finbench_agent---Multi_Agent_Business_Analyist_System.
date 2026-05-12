@@ -798,7 +798,17 @@ class SniperRAG:
             numeric_value=computed_value,
         )
 
-        unit_str = f" {anchor_cell.unit}" if anchor_cell.unit and anchor_cell.unit != "units" else ""
+# Bug Fix 6 (synthetic path): friendly unit display
+        _UNIT_DISPLAY_SYN = {
+            "x10^6":      "million",
+            "x10^9":      "billion",
+            "x10^3":      "thousand",
+            "USDperShare": "per share",
+            "shares":     "shares",
+        }
+        unit_raw = anchor_cell.unit or ""
+        unit_friendly = _UNIT_DISPLAY_SYN.get(unit_raw, unit_raw)
+        unit_str = f" {unit_friendly}" if unit_friendly and unit_friendly != "units" else ""
         answer = f"{formatted_value}{unit_str} [{synthetic_cell.metadata_key}] (computed: {formula_desc})"
 
         return SniperResult(
